@@ -12,6 +12,7 @@ import com.morpheusdata.core.util.ComputeUtility
 import com.morpheusdata.core.util.MorpheusUtils
 import com.morpheusdata.model.Account
 import com.morpheusdata.model.Cloud
+import com.morpheusdata.model.ComputeCapacityInfo
 import com.morpheusdata.model.ComputeServer
 import com.morpheusdata.model.Icon
 import com.morpheusdata.model.OptionType
@@ -580,6 +581,31 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 		}
 	}
 
+	def finalizeVm(Map runConfig, ProvisionResponse provisionResponse, Map runResults) {
+		log.debug("runTask onComplete: provisionResponse: ${provisionResponse}")
+		ComputeServer server = morpheus.async.computeServer.get(runConfig.serverId).blockingGet()
+		try {
+			if(provisionResponse.success == true) {
+				server.sshHost = runResults.sshHost
+				server.status = 'provisioned'
+				server.statusDate = new Date()
+				server.serverType = 'vm'
+				server.osDevice = '/dev/sda'
+				server.lvmEnabled = server.volumes?.size() > 1
+				server.managed = true
+				if(runResults.newPassword)
+					server.sshPassword = runResults.newPassword
+				server.capacityInfo = new ComputeCapacityInfo(maxCores:1, maxMemory:runConfig.maxMemory,
+					maxStorage:runConfig.maxStorage)
+				saveAndGet(server)
+			}
+		}
+		catch(Throwable t) {
+			log.error("finalizeVm error: ${t.message}", t)
+			provisionResponse.setError("failed to run server: ${t.message}")
+		}
+	}
+
 	/**
 	 * This method is called after successful completion of runWorkload and provides an opportunity to perform some final
 	 * actions during the provisioning process. For example, ejected CDs, cleanup actions, etc
@@ -632,7 +658,8 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 	 */
 	@Override
 	ServiceResponse removeWorkload(Workload workload, Map opts) {
-		return ServiceResponse.success()
+		log.debug "removeWorkload: ${workload} ${opts}"
+		return deleteServer(workload.server)
 	}
 
 	/**
@@ -644,7 +671,31 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 	 */
 	@Override
 	ServiceResponse<ProvisionResponse> getServerDetails(ComputeServer server) {
-		return new ServiceResponse<ProvisionResponse>(true, null, null, new ProvisionResponse(success:true))
+		ProvisionResponse rtn = new ProvisionResponse()
+		def serverUuid = server.externalId
+		if(server && server.uuid && server.resourcePool?.externalId) {
+			Connection connection
+			try {
+				connection = OlvmComputeUtility.getConnection(server.cloud)
+				Map serverDetails = OlvmComputeUtility.checkServerReady([connection:connection, server:server])
+				if (serverDetails.success && serverDetails.data) {
+					rtn.externalId = serverUuid
+					rtn.success = serverDetails.success
+					rtn.privateIp = serverDetails.data.ipV4?.first()
+					rtn.publicIp = rtn.privateIp
+					rtn.hostname = serverDetails.data.hostname
+					return ServiceResponse.success(rtn)
+				} else {
+					return ServiceResponse.error("Server not ready/does not exist")
+				}
+			}
+			finally {
+				if (connection)
+					connection?.close()
+			}
+		} else {
+			return ServiceResponse.error("Could not find server uuid")
+		}
 	}
 
 	/**
@@ -664,18 +715,42 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 	 * @return Response from API
 	 */
 	@Override
-	ServiceResponse stopServer(ComputeServer computeServer) {
-		return ServiceResponse.success()
+	ServiceResponse stopServer(ComputeServer server) {
+		log.debug("stopServer: ${server}")
+		if(server?.externalId && (server.managed == true || server.computeServerType?.controlPower)) {
+			def stopResult = OlvmComputeUtility.stopVm([cloud:server.cloud, server: server])
+
+			if (stopResult.success) {
+				return ServiceResponse.success()
+			} else {
+				return ServiceResponse.error('Failed to stop vm')
+			}
+		} else {
+			log.info("stopServer - ignoring request for unmanaged instance")
+		}
+		ServiceResponse.success()
 	}
 
 	/**
 	 * Start the server
-	 * @param computeServer to start
+	 * @param server to start
 	 * @return Response from API
 	 */
 	@Override
-	ServiceResponse startServer(ComputeServer computeServer) {
-		return ServiceResponse.success()
+	ServiceResponse startServer(ComputeServer server) {
+		log.debug("startServer: ${server}")
+		if(server?.externalId && (server.managed == true || server.computeServerType?.controlPower)) {
+			def startResult = OlvmComputeUtility.startVm([cloud:server.cloud, server:server])
+
+			if(startResult.success == true) {
+				return ServiceResponse.success()
+			} else {
+				return ServiceResponse.error('Failed to start vm')
+			}
+		} else {
+			log.info("startServer - ignoring request for unmanaged instance")
+		}
+		ServiceResponse.success()
 	}
 
 	/**
@@ -716,6 +791,27 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 	@Override
 	String getName() {
 		return 'OLVM Cloud Plugin Provisioning'
+	}
+
+	/**
+	 * Delete the server
+	 * @param server to start
+	 * @return Response from API
+	 */
+	ServiceResponse deleteServer(ComputeServer server) {
+		log.debug("deleteServer: ${server}")
+		if(server?.externalId && (server.managed == true || server.computeServerType?.controlPower)) {
+			def deleteResult = OlvmComputeUtility.deleteServer([cloud:server.cloud, server:server])
+
+			if (deleteResult.success) {
+				return ServiceResponse.success()
+			} else {
+				return ServiceResponse.error('Failed to remove vm')
+			}
+		} else {
+			log.info("deleteServer - ignoring request for unmanaged instance")
+		}
+		return ServiceResponse.success()
 	}
 
 	protected getWorkloadImage(Workload workload, Map opts = [:]) {
@@ -906,7 +1002,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 			// TODO: add data disks
 
 			// start vm for the first time
-			OlvmComputeUtility.startVm([connection:runConfig.connection, server:server])
+			OlvmComputeUtility.startVmWithCloudInit([connection:runConfig.connection, server:server, cloudInitScript:runConfig.cloudConfig])
 
 			//wait for ready
 			def statusResults = OlvmComputeUtility.checkServerReady(runConfig)
@@ -918,7 +1014,8 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 				def privateIp = serverDetails.ipV4?.first()
 				def publicIp = privateIp
 
-				taskResults.server = createResults.server
+				taskResults.sshHost = publicIp
+				taskResults.server = serverDetails
 				taskResults.success = true
 			}
 			else {

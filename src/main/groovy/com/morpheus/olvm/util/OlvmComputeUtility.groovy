@@ -19,6 +19,7 @@ import static org.ovirt.engine.sdk4.builders.Builders.cpu
 import static org.ovirt.engine.sdk4.builders.Builders.cpuTopology
 import static org.ovirt.engine.sdk4.builders.Builders.disk
 import static org.ovirt.engine.sdk4.builders.Builders.diskAttachment
+import static org.ovirt.engine.sdk4.builders.Builders.initialization
 import static org.ovirt.engine.sdk4.builders.Builders.nic
 import static org.ovirt.engine.sdk4.builders.Builders.storageDomain
 import static org.ovirt.engine.sdk4.builders.Builders.template
@@ -238,6 +239,38 @@ class OlvmComputeUtility {
         return rtn
     }
 
+    static startVmWithCloudInit(opts) {
+        def rtn
+        Connection connection = opts.connection
+        def closeConnection = false
+        try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
+            def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
+            vmService.start()
+                .useCloudInit(true)
+                .vm(
+                    vm()
+                    .initialization(
+                        initialization()
+                        .customScript(opts.cloudInitScript)
+                    )
+                )
+                .send()
+
+            rtn = waitForSomeStuffToHappen([label:"Start vm ${opts.server?.name}", timeout:(5l * 60l * 1000l)]) {
+                return vmService.get().send().vm().status() == VmStatus.UP
+            }
+        }
+        finally {
+            if (closeConnection)
+                connection?.close(0)
+        }
+        return rtn
+    }
+
     static startVm(opts) {
         def rtn
         Connection connection = opts.connection
@@ -349,6 +382,7 @@ class OlvmComputeUtility {
                 def vm = vmService.get().send().vm()
                 def vmMap = [
                     name:vm.name(),
+                    hostname:vm.fqdn(),
                     id:vm.id(),
                     memory:vm.memory(),
                     cores:vm.cpu().topology().cores() * vm.cpu().topology().sockets(),
@@ -382,11 +416,37 @@ class OlvmComputeUtility {
                     ]
                 }
                 rtn.data = vmMap
-                rtn.success
+                rtn.success = true
             }
         }
         catch(Throwable t) {
             log.error("getServerDetail error: ${t}", t)
+        }
+        finally {
+            if (closeConnection)
+                connection?.close()
+        }
+        return rtn
+    }
+
+    static deleteServer(opts) {
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
+
+            // first stop our vm
+            def vmId = opts.server?.externalId ?: opts.vmId
+            stopVm([connection:connection, vmId:vmId])
+
+            // then remove vm
+            def vmService = connection.systemService().vmsService().vmService(vmId)
+            vmService.remove().send()
+            rtn.success = true
         }
         finally {
             if (closeConnection)

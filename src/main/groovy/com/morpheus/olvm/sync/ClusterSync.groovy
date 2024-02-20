@@ -23,15 +23,16 @@ class ClusterSync {
     private OlvmCloudPlugin plugin
     private Connection connection
 
-    public ClusterSync(OlvmCloudPlugin plugin, Cloud cloud, Connection connection = null) {
+    public ClusterSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Connection connection = null) {
         super()
         this.@cloud = cloud
         this.@plugin = plugin
+        this.@morpheusContext = ctx
         this.@connection = connection
     }
 
     def execute() {
-        log.info("Starting OLVM datacenter sync for cloud ${cloud.name})")
+        log.info("Starting OLVM cluster sync for cloud ${cloud.name})")
         try {
             if (!connection)
                 connection = OlvmComputeUtility.getConnection(cloud)
@@ -55,12 +56,12 @@ class ClusterSync {
                 addMissingClusters(addItems)
             }.withLoadObjectDetailsFromFinder { updateItems ->
                 return morpheusContext.async.cloud.pool.listById(updateItems.collect { it.existingItem.id } as List<Long>)
-            }.observe()
-            log.info("Completed OLVM datacenter sync for cloud ${cloud.name}")
+            }.start()
+            log.info("Completed OLVM cluster sync for cloud ${cloud.name}")
             return rtn
         }
         catch (Throwable t) {
-            log.error("Failed to sync OLVM datacenters: ${t.message}", t)
+            log.error("Failed to sync OLVM clusters: ${t.message}", t)
         }
     }
 

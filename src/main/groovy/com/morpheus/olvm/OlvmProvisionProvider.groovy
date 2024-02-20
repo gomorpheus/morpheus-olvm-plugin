@@ -1,20 +1,36 @@
 package com.morpheus.olvm
 
+import com.morpheus.olvm.util.OlvmComputeUtility
 import com.morpheusdata.core.AbstractProvisionProvider
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.Plugin
+import com.morpheusdata.core.data.DataFilter
+import com.morpheusdata.core.data.DataQuery
+import com.morpheusdata.core.providers.CloudProvider
 import com.morpheusdata.core.providers.WorkloadProvisionProvider
+import com.morpheusdata.core.util.ComputeUtility
+import com.morpheusdata.core.util.MorpheusUtils
+import com.morpheusdata.model.Account
+import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.ComputeServer
 import com.morpheusdata.model.Icon
 import com.morpheusdata.model.OptionType
 import com.morpheusdata.model.ServicePlan
+import com.morpheusdata.model.StorageVolume
 import com.morpheusdata.model.StorageVolumeType
+import com.morpheusdata.model.VirtualImage
+import com.morpheusdata.model.VirtualImageLocation
 import com.morpheusdata.model.Workload
+import com.morpheusdata.model.provisioning.NetworkConfiguration
 import com.morpheusdata.model.provisioning.WorkloadRequest
 import com.morpheusdata.response.PrepareWorkloadResponse
 import com.morpheusdata.response.ProvisionResponse
 import com.morpheusdata.response.ServiceResponse
+import groovy.util.logging.Slf4j
+import org.ovirt.engine.sdk4.Connection
+import org.ovirt.engine.sdk4.internal.containers.TemplateContainer
 
+@Slf4j
 class OlvmProvisionProvider extends AbstractProvisionProvider implements WorkloadProvisionProvider {
 	public static final String PROVISION_PROVIDER_CODE = 'cloud.olvm.provision'
 
@@ -40,12 +56,43 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 	 */
 	@Override
 	ServiceResponse<PrepareWorkloadResponse> prepareWorkload(Workload workload, WorkloadRequest workloadRequest, Map opts) {
-		ServiceResponse<PrepareWorkloadResponse> resp = new ServiceResponse<PrepareWorkloadResponse>(
-			true, // successful
-			'', // no message
-			null, // no errors
-			new PrepareWorkloadResponse(workload:workload) // adding the workload to the response for convenience
-		)
+		ServiceResponse<PrepareWorkloadResponse> resp = new ServiceResponse<>()
+		resp.data = new PrepareWorkloadResponse(workload: workload, options: [sendIp: false])
+		ComputeServer server = workload.server
+
+		if(server.platform == "linux") {
+			resp.data.disableCloudInit = false
+			resp.data.disableAutoUpdates = false
+		}
+
+		//lets figure out what image we are deploying
+		Connection connection
+		try {
+			connection = OlvmComputeUtility.getConnection(server.cloud)
+			def imageType = workload.getConfigMap().imageType ?: 'default'
+			//amazon generic instance type has a radio button for this
+			def virtualImage = getWorkloadImage(workload, opts)
+			def config = workload.configMap
+			if (virtualImage) {
+				//this ensures the image is set correctly for provisioning as it enters runWorkload
+				workload.server.sourceImage = virtualImage
+				VirtualImageLocation location = ensureVirtualImageLocation(connection, virtualImage, server.cloud)
+				resp.data.setVirtualImageLocation(location)
+
+				if (virtualImage.osType?.name?.contains('ubuntu') && MorpheusUtils.compareVersions(virtualImage.osType?.osVersion, '16.04') >= 0) {
+					resp.data.disableAutoUpdates = true
+				}
+				resp.success = true
+			}
+			else {
+				resp.success = false
+				resp.msg = "Virtual Image not found"
+			}
+		}
+		finally {
+			connection?.close()
+		}
+
 		return resp
 	}
 
@@ -78,7 +125,32 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 	@Override
 	Collection<OptionType> getOptionTypes() {
 		Collection<OptionType> options = []
-		// TODO: create some option types for provisioning and add them to collection
+		options << new OptionType([
+			name:'datacenter',
+			code:'olvm.plugin.provision.datacenter',
+			category:'provisionType.olvm',
+			fieldName:'datacenterId',
+			fieldContext:'config',
+			fieldLabel:'Datacenter',
+			required:true,
+			noBlank:true,
+			inputType:OptionType.InputType.SELECT,
+			displayOrder:100,
+			optionSource:'olvmDatacenters'
+		])
+		options << new OptionType([
+			name:'cluster',
+			code:'olvm.plugin.provision.cluster',
+			category:'provisionType.olvm',
+			fieldName:'clusterId',
+			fieldContext:'config',
+			fieldLabel:'Cluster',
+			required:true,
+			noBlank:true,
+			inputType:OptionType.InputType.SELECT,
+			displayOrder:110,
+			optionSource:'olvmClusters'
+		])
 		return options
 	}
 
@@ -99,9 +171,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 	 */
 	@Override
 	Collection<StorageVolumeType> getRootVolumeStorageTypes() {
-		Collection<StorageVolumeType> volumeTypes = []
-		// TODO: create some storage volume types and add to collection
-		return volumeTypes
+		return getStorageVolumeTypes()
 	}
 
 	/**
@@ -110,9 +180,20 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 	 */
 	@Override
 	Collection<StorageVolumeType> getDataVolumeStorageTypes() {
-		Collection<StorageVolumeType> dataVolTypes = []
-		// TODO: create some data volume types and add to collection
-		return dataVolTypes
+		return getStorageVolumeTypes()
+	}
+
+	private getStorageVolumeTypes() {
+		Collection<StorageVolumeType> volumeTypes = []
+
+		volumeTypes << new StorageVolumeType([
+			code        : 'olvm-standard', displayName: 'standard', name: 'standard',
+			description : 'OLVM standard volume', volumeType: 'volume', enabled: true,
+			customLabel : true, customSize: true, defaultType: true, autoDelete: true,
+			minStorage  : (ComputeUtility.ONE_GIGABYTE), maxStorage: (16L * ComputeUtility.ONE_TERABYTE),
+			hasDatastore: true, allowSearch: true, volumeCategory: 'volume',
+			displayOrder: 0
+		])
 	}
 
 	/**
@@ -124,8 +205,309 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 	@Override
 	Collection<ServicePlan> getServicePlans() {
 		Collection<ServicePlan> plans = []
-		// TODO: create some service plans (sizing like cpus, memory, etc) and add to collection
+		plans << new ServicePlan(
+			code:'olvm.plugin.512',
+			editable:true,
+			name:'1 CPU, 512MB Memory',
+			description:'1 CPU, 512MB Memory',
+			sortOrder:0,
+			maxStorage:10l * 1024l * 1024l * 1024l,
+			maxMemory:1l * 512l * 1024l * 1024l, maxCpu:0,
+			maxCores:1,
+			customMaxStorage:true,
+			customMaxDataStorage:true,
+			addVolumes:true,
+			coresPerSocket:1
+		)
+		plans << new ServicePlan(
+			code:'olvm.plugin.1024',
+			editable:true,
+			name:'1 CPU, 1GB Memory',
+			description:'1 CPU, 1GB Memory',
+			sortOrder:1,
+			maxStorage:10l * 1024l * 1024l * 1024l,
+			maxMemory:1l * 1024l * 1024l * 1024l,
+			maxCpu:0,
+			maxCores:1,
+			customMaxStorage:true,
+			customMaxDataStorage:true,
+			addVolumes:true,
+			coresPerSocket:1
+		)
+		plans << new ServicePlan(
+			code:'olvm.plugin.2048',
+			editable:true,
+			name:'1 CPU, 2GB Memory',
+			description:'1 CPU, 2GB Memory',
+			sortOrder:2,
+			maxStorage:20l * 1024l * 1024l * 1024l,
+			maxMemory:2l * 1024l * 1024l * 1024l,
+			maxCpu:0,
+			maxCores:1,
+			customMaxStorage:true,
+			customMaxDataStorage:true,
+			addVolumes:true,
+			coresPerSocket:1
+		)
+		plans << new ServicePlan(
+			code:'olvm.plugin.4096',
+			editable:true,
+			name:'1 CPU, 4GB Memory',
+			description:'1 CPU, 4GB Memory',
+			sortOrder:3,
+			maxStorage:40l * 1024l * 1024l * 1024l,
+			maxMemory:4l * 1024l * 1024l * 1024l,
+			maxCpu:0,
+			maxCores:1,
+			customMaxStorage:true,
+			customMaxDataStorage:true,
+			addVolumes:true,
+			coresPerSocket:1
+		)
+		plans << new ServicePlan(
+			code:'olvm.plugin.8192',
+			editable:true,
+			name:'2 CPU, 8GB Memory',
+			description:'2 CPU, 8GB Memory',
+			sortOrder:4,
+			maxStorage:80l * 1024l * 1024l * 1024l,
+			maxMemory:8l * 1024l * 1024l * 1024l,
+			maxCpu:0, maxCores:2,
+			customMaxStorage:true,
+			customMaxDataStorage:true,
+			addVolumes:true,
+			coresPerSocket:1
+		)
+		plans << new ServicePlan(
+			code:'olvm.plugin.16384',
+			editable:true,
+			name:'2 CPU, 16GB Memory',
+			description:'2 CPU, 16GB Memory',
+			sortOrder:5,
+			maxStorage:160l * 1024l * 1024l * 1024l,
+			maxMemory:16l * 1024l * 1024l * 1024l,
+			maxCpu:0,
+			maxCores:2,
+			customMaxStorage:true,
+			customMaxDataStorage:true,
+			addVolumes:true,
+			coresPerSocket:1
+		)
+		plans << new ServicePlan(
+			code:'olvm.plugin.24576',
+			editable:true,
+			name:'4 CPU, 24GB Memory',
+			description:'4 CPU, 24GB Memory',
+			sortOrder:6,
+			maxStorage:240l * 1024l * 1024l * 1024l,
+			maxMemory:24l * 1024l * 1024l * 1024l,
+			maxCpu:0,
+			maxCores:4,
+			customMaxStorage:true,
+			customMaxDataStorage:true,
+			addVolumes:true,
+			coresPerSocket:1
+		)
+		plans << new ServicePlan(
+			code:'olvm.plugin.32768',
+			editable:true,
+			name:'4 CPU, 32GB Memory',
+			description:'4 CPU, 32GB Memory',
+			sortOrder:7,
+			maxStorage:320l * 1024l * 1024l * 1024l,
+			maxMemory:32l * 1024l * 1024l * 1024l,
+			maxCpu:0,
+			maxCores:4,
+			customMaxStorage:true,
+			customMaxDataStorage:true,
+			addVolumes:true,
+			coresPerSocket:1
+		)
+		plans << new ServicePlan(
+			code:'olvm.plugin.custom',
+			editable:true,
+			name:'Custom OLVM',
+			description:'Custom OLVM',
+			sortOrder:20,
+			customMaxStorage:true,
+			customMaxDataStorage:true,
+			addVolumes:true,
+			customCpu:true,
+			customCores:true,
+			customMaxMemory:true,
+			deletable:false,
+			provisionable:true,
+			maxStorage:0l,
+			maxMemory:0l,
+			maxCpu:0,
+			maxCores:1,
+			coresPerSocket:0
+		)
 		return plans
+	}
+
+	@Override
+	Boolean lvmSupported() {
+		return true
+	}
+
+	@Override
+	Boolean multiTenant() {
+		return false
+	}
+
+	@Override
+	Boolean aclEnabled() {
+		return false
+	}
+
+	@Override
+	String getHostDiskMode() {
+		return "lvm"
+	}
+
+	@Override
+	Boolean hasSecurityGroups() {
+		return false
+	}
+
+	@Override
+	Boolean supportsAutoDatastore() {
+		return false
+	}
+
+	/**
+	 * Determines if this provision type has datastores that can be selected or not.
+	 * @return Boolean representation of whether or not this provision type has datastores
+	 */
+	@Override
+	Boolean hasDatastores() {
+		return true
+	}
+
+	/**
+	 * Determines if this provision type has networks that can be selected or not.
+	 * @return Boolean representation of whether or not this provision type has networks
+	 */
+	@Override
+	Boolean hasNetworks() {
+		return true
+	}
+
+	/**
+	 * Determines if this provision type supports service plans that expose the tag match property.
+	 * @return Boolean representation of whether or not service plans expose the tag match property.
+	 */
+	@Override
+	Boolean hasPlanTagMatch() {
+		return false
+	}
+
+	/**
+	 * Returns the maximum number of network interfaces that can be chosen when provisioning with this type
+	 * @return maximum number of networks or 0,null if unlimited.
+	 */
+	@Override
+	Integer getMaxNetworks() {
+		return 0
+	}
+
+	/**
+	 * Determines if this provision type has resources pools that can be selected or not.
+	 * @return Boolean representation of whether or not this provision type has resource pools
+	 */
+	@Override
+	Boolean hasComputeZonePools() {
+		false
+	}
+
+	/**
+	 * Indicates if Network selection should be scoped to the ComputeZonePool selected during provisioning
+	 * @return Boolean
+	 */
+	Boolean networksScopedToPools() {
+		return false
+	}
+
+	/**
+	 * Indicates if a ComputeZonePool is required during provisioning
+	 * @return Boolean
+	 */
+	@Override
+	Boolean computeZonePoolRequired() {
+		return false
+	}
+
+	/**
+	 * Determines if this provision type allows the rot volume to be renamed.
+	 * @return Boolean representation of whether or not this provision type allows the rot volume to be renamed
+	 */
+	@Override
+	Boolean canCustomizeRootVolume() {
+		return true
+	}
+
+	/**
+	 * Determines if this provision type allows the root volume to be resized.
+	 * @return Boolean representation of whether or not this provision type allows the root volume to be resized
+	 */
+	@Override
+	Boolean canResizeRootVolume() {
+		return true
+	}
+
+	/**
+	 * Indicates if volumes may be added during provisioning
+	 * @return Boolean
+	 */
+	@Override
+	Boolean canAddVolumes() {
+		return true
+	}
+
+	/**
+	 * Determines if this provision type allows the user to add data volumes.
+	 * @return Boolean representation of whether or not this provision type allows the user to add data volumes
+	 */
+	@Override
+	Boolean canCustomizeDataVolumes() {
+		return true
+	}
+
+	@Override
+	Boolean customSupported() {
+		return true
+	}
+
+	@Override
+	Boolean createDefaultInstanceType() {
+		return true
+	}
+
+	@Override
+	ArrayList<OptionType> getDefaultInstanceTypeOptions() {
+		Collection<OptionType> options = []
+		options << new OptionType([
+			name:'template',
+			code:'olvm.plugin.provision.template',
+			category:'provisionType.olvm',
+			fieldName:'templateId',
+			fieldContext:'config',
+			fieldLabel:'Template',
+			required:true,
+			noBlank:true,
+			inputType:OptionType.InputType.SELECT,
+			displayOrder:110,
+			optionSource:'olvmTemplates'
+		])
+	}
+
+	/**
+	 * Custom service plans can be created for this provider
+	 * @return Boolean
+	 */
+	Boolean supportsCustomServicePlans() {
+		return true;
 	}
 
 	/**
@@ -137,7 +519,21 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 	 */
 	@Override
 	ServiceResponse validateWorkload(Map opts) {
-		return ServiceResponse.success()
+		log.debug("validateWorkload: ${opts}")
+		ServiceResponse rtn = new ServiceResponse(true, null, [:], null)
+		try {
+			def cloud = morpheus.async.cloud.getCloudById(opts.cloud?.id ?: opts.zoneId).blockingGet()
+			def validateTemplate = opts.template != null
+			def validationResults = OlvmComputeUtility.validateServerConfig(morpheus, [cloud:cloud, validateTemplate:validateTemplate] + opts)
+			if(!validationResults.success) {
+				validationResults.errors?.each { it ->
+					rtn.addError(it.field, it.msg)
+				}
+			}
+		} catch(e) {
+			log.error("validateWorkload error: ${e}", e)
+		}
+		return rtn
 	}
 
 	/**
@@ -152,13 +548,36 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 	 */
 	@Override
 	ServiceResponse<ProvisionResponse> runWorkload(Workload workload, WorkloadRequest workloadRequest, Map opts) {
-		// TODO: this is where you will implement the work to create the workload in your cloud environment
-		return new ServiceResponse<ProvisionResponse>(
-			true,
-			null, // no message
-			null, // no errors
-			new ProvisionResponse(success:true)
-		)
+		log.debug "runWorkload: ${workload} ${workloadRequest} ${opts}"
+		Connection connection = opts.connection
+		def closeConnection = false
+		ProvisionResponse provisionResponse = new ProvisionResponse(success: true)
+		ComputeServer server = workload.server
+		try {
+			Cloud cloud = server.cloud
+			if (!connection) {
+				connection = OlvmComputeUtility.getConnection(cloud)
+				closeConnection = true
+			}
+			VirtualImage virtualImage = server.sourceImage
+			def runConfig = buildWorkloadRunConfig(workload, workloadRequest, virtualImage, connection, opts)
+			runVirtualMachine(runConfig, provisionResponse, opts + [connection:connection])
+			log.info("Checking Server Interfaces....")
+			workload.server.interfaces?.each { netInt ->
+				log.info("Net Interface: ${netInt.id} -> Network: ${netInt.network?.id}")
+			}
+			provisionResponse.noAgent = opts.noAgent ?: false
+			return new ServiceResponse<ProvisionResponse>(success: true, data: provisionResponse)
+		}
+		catch (Throwable t) {
+			log.error("runWorkload error: ${t.message}", t)
+			provisionResponse.setError(t.message)
+			return new ServiceResponse(success: false, msg:t.message, error:e.message, data: provisionResponse)
+		}
+		finally {
+			if (closeConnection)
+				connection?.close()
+		}
 	}
 
 	/**
@@ -297,5 +716,249 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 	@Override
 	String getName() {
 		return 'OLVM Cloud Plugin Provisioning'
+	}
+
+	protected getWorkloadImage(Workload workload, Map opts = [:]) {
+		VirtualImage rtn
+		def containerConfig = workload.getConfigMap()
+		def imageType = containerConfig.imageType ?: 'default'
+		if(imageType == 'private' && containerConfig.imageId) {
+			rtn = morpheus.async.virtualImage.get(containerConfig.imageId as Long).blockingGet()
+		}
+		else if(imageType == 'local' && (containerConfig.localImageId || containerConfig.template)) {
+			Long localImageId = getImageId(containerConfig.localImageId) ?: getImageId(containerConfig.template)
+			if(localImageId) {
+				rtn = morpheus.async.virtualImage.get(localImageId).blockingGet()
+			}
+		}
+		else if(workload.workloadType.virtualImage) {
+			rtn = workload.workloadType.virtualImage
+		}
+		else if (containerConfig.templateId) {
+			rtn = morpheus.async.virtualImage.find(
+				new DataQuery().withFilters(new DataFilter<String>('externalId', containerConfig.templateId))
+			).blockingGet()
+		}
+		return rtn
+	}
+
+	protected VirtualImageLocation ensureVirtualImageLocation(Connection connection, VirtualImage virtualImage, Cloud cloud) {
+		def rtn = virtualImage.imageLocations?.find{it.refType == 'ComputeZone' && it.refId == cloud.id}
+		if(!rtn) {
+			rtn = virtualImage.imageLocations?.find{it.refType == 'ComputeZone' && it.refId == cloud.id}
+		}
+		if(!rtn) {
+			def templateResults
+			if(!virtualImage.externalId) {
+				//load image by name
+				templateResults = OlvmComputeUtility.loadImage([connection: connection, imageName: virtualImage.name, isPublic: true])
+			}
+			else {
+				templateResults = OlvmComputeUtility.loadImage([connection: connection, imageId: virtualImage.externalId])
+			}
+			if (templateResults.success && templateResults.data.template) {
+				TemplateContainer template = templateResults.data.template
+				def newLocation = new VirtualImageLocation(
+					virtualImage: virtualImage, imageName: virtualImage.name, externalId: template.id(),
+					code: "olvm.plugin.template.${cloud.id}.${template.id()}",
+					refType:'ComputeZone', refId:cloud.id
+				)
+				newLocation = morpheus.async.virtualImage.location.create(newLocation, cloud).blockingGet()
+				rtn = newLocation
+			}
+		}
+		return rtn
+	}
+
+	protected buildWorkloadRunConfig(Workload workload, WorkloadRequest workloadRequest, VirtualImage virtualImage, Connection connection, Map opts) {
+		log.debug("buildRunConfig: {}, {}, {}, {}", workload, workloadRequest, virtualImage, opts)
+		Map workloadConfig = workload.getConfigMap()
+		ComputeServer server = workload.server
+		Cloud cloud = server.cloud
+		StorageVolume rootVolume = server.volumes?.find{it.rootVolume == true}
+
+		def maxMemory = server.maxMemory
+		def maxStorage = rootVolume.getMaxStorage()
+
+		def runConfig = [:] + opts + buildRunConfig(server, virtualImage, workloadRequest.networkConfiguration, connection, workloadConfig, opts)
+
+		runConfig += [
+			name              : server.name,
+			instanceId		  : workload.instance.id,
+			containerId       : workload.id,
+			account 		  : server.account,
+			osDiskSize		  : maxStorage.div(ComputeUtility.ONE_GIGABYTE),
+			maxStorage        : maxStorage,
+			maxMemory		  : maxMemory,
+			applianceServerUrl: workloadRequest.cloudConfigOpts?.applianceUrl,
+			workloadConfig    : workload.getConfigMap(),
+			timezone          : (server.getConfigProperty('timezone') ?: cloud.timezone),
+			proxySettings     : workloadRequest.proxyConfiguration,
+			noAgent           : (opts.config?.containsKey("noAgent") == true && opts.config.noAgent == true),
+			installAgent      : (opts.config?.containsKey("noAgent") == false || (opts.config?.containsKey("noAgent") && opts.config.noAgent != true)),
+			userConfig        : workloadRequest.usersConfiguration,
+			cloudConfig	      : workloadRequest.cloudConfigUser,
+			networkConfig	  : workloadRequest.networkConfiguration
+		]
+
+		return runConfig
+	}
+
+	protected buildRunConfig(ComputeServer server, VirtualImage virtualImage, NetworkConfiguration networkConfiguration, Connection connection, config, Map opts) {
+		log.debug("buildRunConfig: {}, {}, {}, {}, {}", server, virtualImage, networkConfiguration, config, opts)
+		Cloud cloud = server.cloud
+		def network = networkConfiguration.primaryInterface?.network
+		if(!network && server.interfaces) {
+			network = server.interfaces.find {it.primaryInterface}?.network
+		}
+		def rootVolume = server.volumes?.find{it.rootVolume == true}
+		def dataDisks = server?.volumes?.findAll{it.rootVolume == false}?.sort{it.id}
+		def maxStorage
+		if(rootVolume) {
+			maxStorage = rootVolume.maxStorage
+		} else {
+			maxStorage = config.maxStorage ?: server.plan.maxStorage
+		}
+
+		// get data center and cluster information
+		def zonePoolService = morpheus.async.cloud.pool
+		def datacenter = zonePoolService.get(config.datacenterId).blockingGet()
+		def cluster = zonePoolService.get(config.clusterId).blockingGet()
+
+		def runConfig = [
+			serverId:server.id,
+			connection:connection,
+			name:server.name,
+			securityRef:config.securityId,
+			networkRef:network?.externalId,
+			datacenterRef:datacenter.externalId,
+			datacenterName:datacenter.name,
+			clusterRef:cluster.externalId,
+			clusterName:cluster.name,
+			server:server,
+			imageType:virtualImage.imageType,
+			serverOs:server.serverOs ?: virtualImage.osType,
+			osType:(virtualImage.osType?.platform == 'windows' ? 'windows' : 'linux') ?: virtualImage.platform,
+			platform:(virtualImage.osType?.platform == 'windows' ? 'windows' : 'linux') ?: virtualImage.platform,
+			osDiskSize:maxStorage.div(ComputeUtility.ONE_GIGABYTE),
+			maxStorage:maxStorage,
+			osDiskName:'/dev/sda1',
+			dataDisks:dataDisks,
+			rootVolume:rootVolume,
+			virtualImage:virtualImage,
+			hostname:server.getExternalHostname(),
+			hosts:server.getExternalHostname(),
+			diskList:[],
+			domainName:server.getExternalDomain(),
+			serverInterfaces:server.interfaces,
+			fqdn:server.getExternalHostname() + '.' + server.getExternalDomain()
+		]
+
+		runConfig.virtualImageLocation = ensureVirtualImageLocation(connection, virtualImage, server.cloud)
+
+		log.debug("Setting snapshot image refs opts.snapshotImageRef: ${opts.snapshotImageRef},  ${opts.rootSnapshotId}")
+		// use selected provision image
+		runConfig.imageRef = runConfig.virtualImageLocation.externalId
+
+		return runConfig
+	}
+
+	protected void runVirtualMachine(Map runConfig, ProvisionResponse provisionResponse, Map opts) {
+		try {
+			// don't think this used
+			// runConfig.template = runConfig.imageId
+			def runResults = insertVm(runConfig, provisionResponse, opts)
+			if(provisionResponse.success) {
+				finalizeVm(runConfig, provisionResponse, runResults)
+			}
+		} catch(e) {
+			log.error("runVirtualMachine error:${e}", e)
+			provisionResponse.setError('failed to upload image file')
+		}
+	}
+
+	protected insertVm(Map runConfig, ProvisionResponse provisionResponse, Map opts) {
+		log.debug("insertVm runConfig: {}", runConfig)
+		def taskResults = [success:false]
+		ComputeServer server = runConfig.server
+		Account account = server.account
+		opts.createUserList = runConfig.userConfig.createUsers
+
+		//save server
+		runConfig.server = saveAndGet(server)
+
+		//set install agent
+		runConfig.installAgent = runConfig.noAgent && server.cloud.agentMode != 'cloudInit'
+
+		//data volumes
+		if(runConfig.dataDisks)
+			runConfig.diskList = buildDataDiskList(runConfig.dataDisks)
+		def createResults = OlvmComputeUtility.createServer(runConfig)
+		log.debug("create server: ${createResults}")
+		if(createResults.success == true && createResults.data.vmId) {
+			server.externalId = createResults.data.vmId
+			server.powerState = 'on'
+			provisionResponse.externalId = server.externalId
+			server = saveAndGet(server)
+			runConfig.server = server
+
+			OlvmComputeUtility.waitForServerExists([connection:runConfig.connection, server:server])
+			// TODO: add data disks
+
+			// start vm for the first time
+			OlvmComputeUtility.startVm([connection:runConfig.connection, server:server])
+
+			//wait for ready
+			def statusResults = OlvmComputeUtility.checkServerReady(runConfig)
+			if(statusResults.success == true) {
+				//good to go
+				def serverDetails = statusResults.data
+				log.debug("server details: {}", serverDetails)
+				//update network info
+				def privateIp = serverDetails.ipV4?.first()
+				def publicIp = privateIp
+
+				taskResults.server = createResults.server
+				taskResults.success = true
+			}
+			else {
+				taskResults.message = 'Failed to get server status'
+			}
+		}
+		else {
+			taskResults.message = createResults.msg
+		}
+		return taskResults
+	}
+
+	def buildDataDiskList(dataDisks) {
+		def rtn = []
+		if(dataDisks) {
+			dataDisks?.eachWithIndex { dataVolume, index ->
+				def deviceName = OlvmComputeUtility.getDeviceName(index+1)
+				rtn << [diskType:dataVolume?.type?.name ?: 'standard', diskSize: dataVolume.maxStorage.div(ComputeUtility.ONE_GIGABYTE),
+						deviceName:deviceName]
+				dataVolume.deviceName = deviceName
+			}
+		}
+		return rtn
+	}
+
+	protected Long getImageId(imageId) {
+		Long rtn
+		try {
+			rtn = imageId?.toLong()
+		} catch(e) {
+			//nothing
+		}
+		return rtn
+	}
+
+	protected ComputeServer saveAndGet(ComputeServer server) {
+		def saveSuccessful = morpheus.async.computeServer.save([server]).blockingGet()
+		if(!saveSuccessful) {
+			log.warn("Error saving server: ${server?.id}" )
+		}
+		return morpheus.async.computeServer.get(server.id).blockingGet()
 	}
 }

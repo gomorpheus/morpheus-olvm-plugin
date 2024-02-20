@@ -5,9 +5,13 @@ import com.morpheusdata.core.AbstractOptionSourceProvider
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.MorpheusInstanceThresholdService
 import com.morpheusdata.core.Plugin
+import com.morpheusdata.core.data.DataFilter
+import com.morpheusdata.core.data.DataQuery
 import com.morpheusdata.model.AccountCredential
 import com.morpheusdata.model.Cloud
+import com.morpheusdata.model.projection.CloudPoolIdentity
 import groovy.util.logging.Slf4j
+import io.reactivex.rxjava3.core.Observable
 
 @Slf4j
 class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
@@ -42,23 +46,67 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
 
     @Override
     List<String> getMethodNames() {
-        return new ArrayList<String>(['olvmDatacenters'])
+        return new ArrayList<String>(['olvmDatacenters', 'olvmCloudDatacenters', 'olvmClusters', 'olvmTemplates'])
     }
 
-    def olvmDatacenters(args) {
+    def olvmTemplates(args) {
+        Cloud cloud = loadCloud(args)
+        def rtn = []
+        def templates = morpheusContext.async.virtualImage.location.search(
+            new DataQuery().withFilters(
+                new DataFilter<String>('refType', 'ComputeZone'),
+                new DataFilter<String>('refId', cloud.id)
+            )
+        ).blockingGet()
+        for (template in templates.items) {
+            rtn << [name:template.imageName, value:template.externalId]
+        }
+        return rtn
+    }
+
+    def olvmCloudDatacenters(args) {
         Cloud cloud = loadCloud(args)
         def rtn
         if(cloud?.accountCredentialData?.username && cloud?.accountCredentialData?.password) {
-            def connection = OlvmComputeUtility.getConnection(cloud)
-            def dcResult = OlvmComputeUtility.listDatacenters([connection:connection])
-            if(dcResult.success && dcResult.data.datacenters) {
-                rtn = [[name:morpheusContext.services.localization.get('gomorpheus.label.all'), value:'']]
-                for (dc in dcResult.data.datacenters) {
-                    rtn << [name:"${dc.name()}", value:dc.id()]
+            def connection
+            try {
+                connection = OlvmComputeUtility.getConnection(cloud)
+                def dcResult = OlvmComputeUtility.listDatacenters([connection: connection])
+                if (dcResult.success && dcResult.data.datacenters) {
+                    rtn = [[name: morpheusContext.services.localization.get('gomorpheus.label.all'), value: '']]
+                    for (dc in dcResult.data.datacenters) {
+                        rtn << [name: "${dc.name()}", value: dc.id()]
+                    }
                 }
             }
+            finally {
+                connection?.close()
+            }
         }
-        rtn ?: [[name:'No datacenters found: verify credentials above.', value: '-1', isDefault: true]]
+        return rtn ?: [[name:'No datacenters found: verify credentials above.', value: '-1', isDefault: true]]
+    }
+
+    def olvmDatacenters(args) {
+        return getCloudPools(args, 'datacenter')
+    }
+    def olvmClusters(args) {
+        return getCloudPools(args, 'cluster')
+    }
+
+    protected getCloudPools(args, type) {
+        Cloud cloud = loadCloud(args)
+        def rtn = []
+        def pools = morpheusContext.async.cloud.pool.search(
+            new DataQuery().withFilters(
+                new DataFilter<String>('type', type),
+                new DataFilter<String>('refType', 'ComputeZone'),
+                new DataFilter<String>('refId', cloud.id)
+            )
+        ).blockingGet()
+        for (cloudPool in pools.items) {
+            rtn << [name:cloudPool.name, value:cloudPool.id]
+        }
+        return rtn
     }
 
     protected Cloud loadCloud(args) {

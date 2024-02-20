@@ -23,10 +23,11 @@ class DatacenterSync {
     private OlvmCloudPlugin plugin
     private Connection connection
 
-    public DatacenterSync(OlvmCloudPlugin plugin, Cloud cloud, Connection connection = null) {
+    public DatacenterSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Connection connection = null) {
         super()
         this.@cloud = cloud
         this.@plugin = plugin
+        this.@morpheusContext = ctx
         this.@connection = connection
     }
 
@@ -55,7 +56,7 @@ class DatacenterSync {
                 addMissingDatacenters(addItems)
             }.withLoadObjectDetailsFromFinder { updateItems ->
                 return morpheusContext.async.cloud.pool.listById(updateItems.collect { it.existingItem.id } as List<Long>)
-            }.observe()
+            }.start()
             log.info("Completed OLVM datacenter sync for cloud ${cloud.name}")
             return rtn
         }
@@ -75,7 +76,7 @@ class DatacenterSync {
                 owner:[id:cloud.owner.id],
                 type:'datacenter',
                 name:cloudItem.name(),
-                displayName:cloudItem.name,
+                displayName:cloudItem.name(),
                 description:"${cloudItem.name()} - version: ${cloudItem.version().fullVersion()}",
                 externalId:cloudItem.id(),
                 status:translateStatus(cloudItem.status()),

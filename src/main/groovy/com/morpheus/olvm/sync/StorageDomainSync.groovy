@@ -9,17 +9,14 @@ import com.morpheusdata.core.util.SyncList
 import com.morpheusdata.core.util.SyncTask
 import com.morpheusdata.model.Account
 import com.morpheusdata.model.Cloud
-import com.morpheusdata.model.CloudPool
 import com.morpheusdata.model.Datastore
 import com.morpheusdata.model.projection.DatastoreIdentity
+import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
 import io.reactivex.rxjava3.core.Observable
 import org.ovirt.engine.sdk4.Connection
-import org.ovirt.engine.sdk4.internal.containers.DataCenterContainer
 import org.ovirt.engine.sdk4.internal.containers.StorageDomainContainer
-import org.ovirt.engine.sdk4.types.StorageDomainStatus
-
-import javax.xml.crypto.Data
+import org.ovirt.engine.sdk4.types.ExternalStatus
 
 @Slf4j
 class StorageDomainSync {
@@ -28,10 +25,11 @@ class StorageDomainSync {
     private OlvmCloudPlugin plugin
     private Connection connection
 
-    public StorageDomainSync(OlvmCloudPlugin plugin, Cloud cloud, Connection connection = null) {
+    public StorageDomainSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Connection connection = null) {
         super()
         this.@cloud = cloud
         this.@plugin = plugin
+        this.@morpheusContext = ctx
         this.@connection = connection
     }
 
@@ -41,29 +39,26 @@ class StorageDomainSync {
             if (!connection)
                 connection = OlvmComputeUtility.getConnection(cloud)
 
-
             // NOTE: for now just syncing all storage domains
-            for (DataCenterContainer dc in OlvmComputeUtility.listDatacenters([connection:connection]).data.datacenters) {
-                def cloudPool =
-                    morpheusContext.async.cloud.pool.search(new DataQuery().withFilters(new DataFilter('externalId', dc.id()))).blockingGet().items?.getAt(0)
-                Observable<DatastoreIdentity> domainRecords = morpheusContext.async.cloud.datastore.listIdentityProjections(
-                    new DataQuery().withFilters(new DataFilter<String>('zonePool.id', cloudPool.id))
-                )
-                SyncTask<DatastoreIdentity,StorageDomainContainer,Datastore> syncTask = new SyncTask<>(domainRecords, dc.storageDomains())
-                def rtn = syncTask.addMatchFunction { DatastoreIdentity domainObject, StorageDomainContainer cloudItem ->
-                    return domainObject.externalId == cloudItem.id()
-                }.onDelete { removeItems ->
-                    removeStorageDomains(removeItems)
-                }.onUpdate { updateItems ->
-                    updateMatchedStorageDomains(updateItems, cloudPool)
-                }.onAdd { addItems ->
-                    addMissingStorageDomains(addItems, cloudPool)
-                }.withLoadObjectDetailsFromFinder { updateItems ->
-                    return morpheusContext.async.cloud.datastore.listById(updateItems.collect { it.existingItem.id } as List<Long>)
-                }.observe()
-            }
+            def olvmStorageDomains = OlvmComputeUtility.listStorageDomains([connection:connection]).data.storageDomains
+            Observable<DatastoreIdentity> domainRecords = morpheusContext.async.cloud.datastore.listIdentityProjections(
+                new DataQuery().withFilters(new DataFilter<String>('cloud.id', cloud.id))
+            )
+            SyncTask<DatastoreIdentity,StorageDomainContainer,Datastore> syncTask = new SyncTask<>(domainRecords, olvmStorageDomains)
+            syncTask.addMatchFunction { DatastoreIdentity domainObject, StorageDomainContainer cloudItem ->
+                return domainObject.externalId == cloudItem.id()
+            }.onDelete { removeItems ->
+                removeStorageDomains(removeItems)
+            }.onUpdate { updateItems ->
+                updateMatchedStorageDomains(updateItems)
+            }.onAdd { addItems ->
+                addMissingStorageDomains(addItems)
+            }.withLoadObjectDetailsFromFinder { updateItems ->
+                return morpheusContext.async.cloud.datastore.listById(updateItems.collect { it.existingItem.id } as List<Long>)
+            }.start()
 
             log.info("Finished OLVM storage domain sync for cloud ${cloud.name}")
+            return ServiceResponse.success()
         }
         catch (Throwable t) {
             log.error("Failed to sync OLVM storage domains: ${t.message}", t)
@@ -74,32 +69,44 @@ class StorageDomainSync {
         morpheusContext.async.cloud.datastore.bulkRemove(removeItems).blockingGet()
     }
 
-    protected addMissingStorageDomains(List<StorageDomainContainer> addItems, CloudPool cloudPool) {
+    protected addMissingStorageDomains(List<StorageDomainContainer> addItems) {
         def adds = []
         for (cloudItem in addItems) {
+            // Check to see if network belongs to a data center
+            def datacenter
+            if (cloudItem.dataCenterPresent()) {
+                def datacenters =
+                    morpheusContext.async.cloud.pool.search(new DataQuery().withFilter(new DataFilter<String>('externalId', cloudItem.dataCenter().id()))).blockingGet()
+                datacenter = datacenters.items?.first()
+            }
             def type = cloudItem.type().value() ?: 'generic'
+            def availableSpace = cloudItem.available()
+            def committedSpace = cloudItem.committed()
             def datastoreConfig = [
                 owner       : new Account(id: cloud.owner.id),
                 name        : cloudItem.name(),
                 externalId  : cloudItem.id(),
                 cloud       : cloud,
-                storageSize : cloudItem.committed() + cloudItem.available(),
-                freeSpace   : cloudItem.available(),
-                zonePool    : cloudPool,
+                storageSize : availableSpace && committedSpace ? availableSpace + committedSpace : 0l,
+                freeSpace   : availableSpace ?: 0l,
+                zonePool    : datacenter,
                 type        : type,
                 category    : "olvm.plugin.datastore.${cloud.id}",
                 drsEnabled  : false,
-                online      : cloudItem.status() == StorageDomainStatus.ACTIVE
+                online      : cloudItem.externalStatus() == ExternalStatus.OK,
+                refType     : 'ComputeZone',
+                refId       : cloud.id
             ]
             Datastore add = new Datastore(datastoreConfig)
-            add.assignedZonePools = [cloudPool]
+            add.assignedZonePools = [datacenter]
             adds << add
 
         }
-        morpheusContext.async.cloud.datastore.bulkCreate(adds).blockingGet()
+        if (adds)
+            morpheusContext.async.cloud.datastore.bulkCreate(adds).blockingGet()
     }
 
-    protected updateMatchedStorageDomains(List<SyncList.UpdateItem<Datastore,StorageDomainContainer>> updateList, CloudPool cloudPool) {
+    protected updateMatchedStorageDomains(List<SyncList.UpdateItem<Datastore,StorageDomainContainer>> updateList) {
         // NOTE: do we care about datacenters changing on storage domains? is this possible?
         def updates = []
         for (updateItem in updateList) {
@@ -111,16 +118,18 @@ class StorageDomainSync {
                 existingItem.name = masterItem.name()
                 save = true
             }
-            if (existingItem.freeSpace != masterItem.available()) {
-                existingItem.freeSpace = masterItem.available()
-                save = true
+            if (masterItem.available()) {
+                if (existingItem.freeSpace != masterItem.available()) {
+                    existingItem.freeSpace = masterItem.available()
+                    save = true
+                }
+                if (existingItem.storageSize != masterItem.available() + masterItem.committed()) {
+                    existingItem.storageSize = masterItem.available() + masterItem.committed()
+                    save = true
+                }
             }
-            if (existingItem.storageSize != masterItem.available() + masterItem.committed()) {
-                existingItem.storageSize = masterItem.available() + masterItem.committed()
-                save = true
-            }
-            if (existingItem.online != (StorageDomainStatus.ACTIVE == masterItem.status())) {
-                existingItem.online = (StorageDomainStatus.ACTIVE == masterItem.status())
+            if (existingItem.online != (ExternalStatus.OK == masterItem.externalStatus())) {
+                existingItem.online = masterItem.externalStatus() == ExternalStatus.OK
                 save = true
             }
             if (save)

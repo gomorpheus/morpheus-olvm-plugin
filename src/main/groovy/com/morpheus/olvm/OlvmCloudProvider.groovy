@@ -1,5 +1,11 @@
 package com.morpheus.olvm
 
+import com.morpheus.olvm.sync.ClusterSync
+import com.morpheus.olvm.sync.DatacenterSync
+import com.morpheus.olvm.sync.NetworkSync
+import com.morpheus.olvm.sync.StorageDomainSync
+import com.morpheus.olvm.sync.TemplateSync
+import com.morpheus.olvm.sync.VirtualMachineSync
 import com.morpheus.olvm.util.OlvmComputeUtility
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.Plugin
@@ -130,7 +136,7 @@ class OlvmCloudProvider implements CloudProvider {
 			fieldCode:'gomorpheus.optiontype.datacenter',
 			fieldName:'datacenter',
 			inputType: OptionType.InputType.SELECT,
-			optionSource:'olvmDatacenters',
+			optionSource:'olvmCloudDatacenters',
 			noBlank:true,
 			dependsOnCode:'zone.serviceUrl, zone.serviceUsername, zone.servicePassword, credential.type, credential.username, credential.password'
 		)
@@ -364,7 +370,44 @@ class OlvmCloudProvider implements CloudProvider {
 	 */
 	@Override
 	ServiceResponse refresh(Cloud cloudInfo) {
-		return ServiceResponse.success()
+		ServiceResponse rtn = ServiceResponse.prepare()
+		def connection
+
+		try {
+			def testResults = OlvmComputeUtility.testConnection(cloudInfo)
+			if(testResults.success) {
+				connection = testResults.data.connection
+				def now = new Date().time
+				new DatacenterSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
+				log.info("${cloudInfo.name}: Datacenters Synced in ${new Date().time - now}ms")
+				now = new Date().time
+				new ClusterSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
+				log.info("${cloudInfo.name}: Clusters Synced in ${new Date().time - now}ms")
+				now = new Date().time
+				new StorageDomainSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
+				log.info("${cloudInfo.name}: StorageDomains Synced in ${new Date().time - now}ms")
+				now = new Date().time
+				new NetworkSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
+				log.info("${cloudInfo.name}: Networks Synced in ${new Date().time - now}ms")
+				now = new Date().time
+				new TemplateSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
+				log.info("${cloudInfo.name}: Templates Synced in ${new Date().time - now}ms")
+				now = new Date().time
+				new VirtualMachineSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
+				log.info("${cloudInfo.name}: Virtual Machines Synced in ${new Date().time - now}ms")
+				rtn.success = true
+			}
+			else {
+				rtn = ServiceResponse.error(testResults.invalidLogin == true ? 'invalid credentials' : 'error connecting')
+			}
+		 }
+		catch (Throwable t) {
+			log.error("refresh cloud error: ${t.message}", t)
+		}
+		finally {
+			connection?.close()
+		}
+		return rtn
 	}
 
 	/**

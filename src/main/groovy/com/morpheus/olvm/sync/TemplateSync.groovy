@@ -14,6 +14,7 @@ import com.morpheusdata.model.VirtualImage
 import com.morpheusdata.model.VirtualImageLocation
 import com.morpheusdata.model.projection.VirtualImageIdentityProjection
 import com.morpheusdata.model.projection.VirtualImageLocationIdentityProjection
+import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
 import io.reactivex.rxjava3.core.Observable
 import org.ovirt.engine.sdk4.Connection
@@ -27,10 +28,11 @@ class TemplateSync {
     private OlvmCloudPlugin plugin
     private Connection connection
 
-    public TemplateSync(OlvmCloudPlugin plugin, Cloud cloud, Connection connection = null) {
+    public TemplateSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Connection connection = null) {
         super()
         this.@cloud = cloud
         this.@plugin = plugin
+        this.@morpheusContext = ctx
         this.@connection = connection
     }
 
@@ -59,9 +61,10 @@ class TemplateSync {
                 addMissingVirtualImageLocations(itemsToAdd)
             }.withLoadObjectDetailsFromFinder { List<SyncTask.UpdateItemDto<VirtualImageLocationIdentityProjection, VirtualImageLocation>> updateItems ->
                 morpheusContext.async.virtualImage.location.listById(updateItems.collect { it.existingItem.id } as List<Long>)
-            }.observe()
+            }.start()
 
             log.info("Finished OLVM template sync for cloud ${cloud.name}")
+            return ServiceResponse.success()
         }
         catch (Throwable t) {
             log.error("Failed to sync OLVM templates: ${t.message}", t)
@@ -73,7 +76,7 @@ class TemplateSync {
     }
 
     protected addMissingVirtualImageLocations(Collection<TemplateContainer> addItems) {
-        List<String> names = addItems.collect { it.name }
+        List<String> names = addItems.collect { it.name() }
         Observable<VirtualImageIdentityProjection> existingRecords = morpheusContext.async.virtualImage.listIdentityProjections(
             new DataQuery().withFilters(
                 new DataFilter<String>("imageType", ImageType.ova.toString()),
@@ -90,7 +93,7 @@ class TemplateSync {
 
         SyncTask<VirtualImageIdentityProjection, TemplateContainer, VirtualImage> syncTask = new SyncTask<>(existingRecords, addItems)
         syncTask.addMatchFunction { VirtualImageIdentityProjection existingItem, TemplateContainer cloudItem ->
-            existingItem.name == cloudItem.name
+            existingItem.name == cloudItem.name()
         }.onDelete { removeItems ->
             // noop
         }.onUpdate { List<SyncTask.UpdateItem<VirtualImage, TemplateContainer>> updateItems ->
@@ -99,10 +102,10 @@ class TemplateSync {
             addMissingVirtualImages(itemsToAdd)
         }.withLoadObjectDetailsFromFinder { List<SyncTask.UpdateItemDto<VirtualImageIdentityProjection, VirtualImage>> updateItems ->
             morpheusContext.async.virtualImage.listById(updateItems.collect { it.existingItem.id } as List<Long>)
-        }.observe()
+        }.start()
     }
 
-    protected addMissingVirtualImages(Collection<TemplateContainer> addList, String regionCode) {
+    protected addMissingVirtualImages(Collection<TemplateContainer> addList) {
         def adds = []
         for(cloudItem in addList) {
             String name = cloudItem.name() ?: cloudItem.id()
@@ -120,7 +123,7 @@ class TemplateSync {
             */
 
             def imageConfig = [
-                category   : "olvm.plugin.template.${cloud.id}", name: cloudItem.name() ?: cloudItem.id(),
+                category   : "olvm.plugin.template.${cloud.id}", name:name,
                 code       : "olvm.plugin.template.${cloud.id}.${cloudItem.id()}", imageType:ImageType.ova.toString(), externalType:cloudItem.type()?.name() ?: null,
                 description: cloudItem.description(), remotePath:cloudItem.href(),
                 platform   : (cloudItem.os()?.type().contains('windows') ? 'windows' : 'linux'), externalId: cloudItem.id(),

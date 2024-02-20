@@ -9,14 +9,13 @@ import com.morpheusdata.core.util.NetworkUtility
 import com.morpheusdata.core.util.SyncList
 import com.morpheusdata.core.util.SyncTask
 import com.morpheusdata.model.Cloud
-import com.morpheusdata.model.CloudPool
 import com.morpheusdata.model.Network as NetworkModel
 import com.morpheusdata.model.projection.NetworkIdentityProjection
+import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
 import io.reactivex.rxjava3.core.Observable
 import org.ovirt.engine.sdk4.Connection
-import org.ovirt.engine.sdk4.internal.containers.DataCenterContainer
-import org.ovirt.engine.sdk4.internal.containers.NetworkContainer
+import org.ovirt.engine.sdk4.internal.containers.VnicProfileContainer
 import org.ovirt.engine.sdk4.types.NetworkStatus
 
 @Slf4j
@@ -26,10 +25,11 @@ class NetworkSync {
     private OlvmCloudPlugin plugin
     private Connection connection
 
-    public NetworkSync(OlvmCloudPlugin plugin, Cloud cloud, Connection connection = null) {
+    public NetworkSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Connection connection = null) {
         super()
         this.@cloud = cloud
         this.@plugin = plugin
+        this.@morpheusContext = ctx
         this.@connection = connection
     }
 
@@ -39,25 +39,28 @@ class NetworkSync {
             if (!connection)
                 connection = OlvmComputeUtility.getConnection(cloud)
 
-            for (DataCenterContainer dc in OlvmComputeUtility.listDatacenters([connection:connection]).data.datacenters) {
-                def cloudPool =
-                    morpheusContext.async.cloud.pool.search(new DataQuery().withFilters(new DataFilter('externalId', dc.id()))).blockingGet().items?.getAt(0)
+            def olvmNetworks = OlvmComputeUtility.listNetworks([connection:connection]).data.profiles
+            Observable<NetworkIdentityProjection> domainRecords = morpheusContext.async.network.listIdentityProjections(
+                new DataQuery().withFilters(
+                    new DataFilter<String>('refType', 'ComputeZone'),
+                    new DataFilter<String>('refId', cloud.id)
+                )
+            )
+            SyncTask<NetworkIdentityProjection,VnicProfileContainer,NetworkModel> syncTask = new SyncTask<>(domainRecords, olvmNetworks)
+            syncTask.addMatchFunction { domainObject, cloudObject ->
+                return domainObject.externalId == cloudObject.id()
+            }.onDelete { removeItems ->
+                removeNetworks(removeItems)
+            }.onUpdate { updateItems ->
+                updateMatchedNetworks(updateItems)
+            }.onAdd { addItems ->
+                addMissingNetworks(addItems)
+            }.withLoadObjectDetailsFromFinder { updateItems ->
+                return morpheusContext.async.network.listById(updateItems.collect { return it.existingItem.id } as List<Long>)
+            }.start()
 
-                Observable<NetworkIdentityProjection> domainRecords = morpheusContext.async.network.listIdentityProjections(cloud.id, cloudPool.id)
-                SyncTask<NetworkIdentityProjection,NetworkContainer,NetworkModel> syncTask = new SyncTask<>(domainRecords, dc.networks())
-                syncTask.addMatchFunction { domainObject, cloudObject ->
-                    return domainObject.externalId == cloudObject.id()
-                }.onDelete { removeItems ->
-                    removeNetworks(removeItems)
-                }.onUpdate { updateItems ->
-                    updateMatchedNetworks(updateItems, cloudPool)
-                }.onAdd { addItems ->
-                    addMissingNetworks(addItems, cloudPool)
-                }.withLoadObjectDetailsFromFinder { updateItems ->
-                    return morpheusContext.async.network.listById(updateItems.collect { return it.existingItem.id } as List<Long>)
-                }.observe()
-            }
             log.info("Finished OLVM network sync for cloud ${cloud.name}")
+            return ServiceResponse.success()
         }
         catch (Throwable t) {
             log.error("Failed to sync OLVM networks: ${t.message}", t)
@@ -68,11 +71,23 @@ class NetworkSync {
         morpheusContext.async.network.bulkRemove(removeItems).blockingGet()
     }
 
-    protected addMissingNetworks(List<NetworkContainer> addItems, CloudPool datacenter) {
+    protected addMissingNetworks(List<VnicProfileContainer > addItems) {
         def adds = []
         for (cloudItem in addItems) {
-            def networkType = plugin.cloudProvider.networkTypes?.find { it.code == 'olvm-logical-network' }
-            def cidr = cloudItem.ip() ? NetworkUtility.networkToCidr(cloudItem.ip().address(), cloudItem.ip().netmask()) : null
+            def networkType =
+                morpheusContext.async.network.type.search(new DataQuery().withFilter(new DataFilter<String>('code', 'olvm-logical-network'))).blockingGet().items?.first()
+
+            def network = cloudItem.network()
+            def cidr = network?.ip() ? NetworkUtility.networkToCidr(network?.ip().address(), network?.ip().netmask()) : null
+
+            // Check to see if network belongs to a data center
+            def datacenter
+            if (network?.dataCenterPresent()) {
+                def datacenters =
+                    morpheusContext.async.cloud.pool.search(new DataQuery().withFilter(new DataFilter<String>('externalId', network.dataCenter().id()))).blockingGet()
+                datacenter = datacenters.items?.first()
+            }
+
             def networkConfig = [
                 owner: cloud.owner,
                 category:"olvm.plugin.netork.${cloud.id}",
@@ -87,7 +102,7 @@ class NetworkSync {
                 refId:cloud.id,
                 cloudPool:datacenter,
                 description:cidr ?: "An OLVM logical network",
-                active:cloudItem.statusPresent() ? cloudItem.status() == NetworkStatus.OPERATIONAL : true,
+                active:network.statusPresent() ? network.status() == NetworkStatus.OPERATIONAL : true,
                 cidr:cidr,
                 dhcpServer:true,
                 cloud:cloud
@@ -100,15 +115,16 @@ class NetworkSync {
         }
     }
 
-    protected updateMatchedNetworks(List<SyncList.UpdateItem<NetworkModel,NetworkContainer>> updateItems, CloudPool cloudPool) {
+    protected updateMatchedNetworks(List<SyncList.UpdateItem<NetworkModel,VnicProfileContainer>> updateItems) {
         def updates = []
         for (updateItem in updateItems) {
             def masterItem = updateItem.masterItem
             def existingItem = updateItem.existingItem
             def save = false
-            def cidr = masterItem.ipPresent() ? NetworkUtility.networkToCidr(masterItem.ip().address(), masterItem.ip().netmask()) : null
+            def network = masterItem.network()
+            def cidr = network.ipPresent() ? NetworkUtility.networkToCidr(network.ip().address(), network.ip().netmask()) : null
             def description = cidr ?: "An OLVM logical network"
-            def active = masterItem.statusPresent() ? masterItem.status() == NetworkStatus.OPERATIONAL : true
+            def active = network.statusPresent() ? network.status() == NetworkStatus.OPERATIONAL : true
 
             if (existingItem.name != masterItem.name()) {
                 existingItem.name = masterItem.name()

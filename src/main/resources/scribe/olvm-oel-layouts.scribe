@@ -1,0 +1,83 @@
+// oel 7.9
+resource "virtual-image" "olvm-image-morpheus-oel-7_9" {
+	code = "olvm.plugin.image.morpheus.oel.7.9.amd64"
+	category = "olvm.plugin.image.morpheus.oel"
+	name = "Morpheus Oracle Linux 7.9"
+	imageType = "ova"
+	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/oel/oel-7_9/morpheus-oel-7.9-v1.ova"
+	imagePath = "olvm/oel/oel-7_9"
+	isCloudInit = true
+	systemImage = true
+	installAgent = true
+	osType {
+		code = "oracle.64"
+	}
+	zoneType = "cloud.olvm.cloud"
+}
+
+resource "workload-type" "olvm-oel-7_9" {
+	code = "olvm-plugin-oel-7.9"
+	shortName = "oraclelinux"
+	name = "Oracle Linux 7.9"
+	ports = [22]
+	containerVersion = "7.9"
+	entryPoint = ""
+	mountLogs = "/var/log"
+	statTypeCode = "vm"
+	logTypeCode = "oraclelinux"
+	showServerLogs = true
+	category = "oraclelinux"
+	cloneType = "oraclelinux"
+	priorityOrder = 0
+	serverType = "vm"
+	providerType = "cloud.olvm.cloud"
+	containerPorts = [{code = "oraclelinux.22"}]
+	actions = [{code = "generic-remove-node"}]
+	checkTypeCode = "containerCheck"
+	virtualImage = virtual-image.olvm-image-morpheus-oel-7_9
+	provisionType = "cloud.olvm.provision"
+	backupType = "olvmSnapshot"
+}
+
+resource "workload-type-set" "olvm-oel-7_9-set" {
+	code = "olvm-oel-7.9-set"
+	containerType = workload-type.olvm-oel-7_9
+	priorityOrder = 0
+	dynamicCount = true
+	containerCount = 1
+}
+
+resource "instance-type-layout" "olvm-oel-7_9-single" {
+	code = "olvm-oel-7.9-single"
+	name = "OLVM VM"
+	sortOrder = 20
+	instanceVersion = "7.9"
+	description = "This will provision a single vm"
+	instanceType {
+		code = "oraclelinux"
+	}
+	serverCount = 1
+	hasAutoScale = true
+	portCount = 1
+	serverType = "vm"
+	enabled = true
+	creatable = true
+	supportsConvertToManaged = true
+	containers = [
+		workload-type-set.olvm-oel-7_9-set
+	]
+	actions = [{code = "generic-add-node"}]
+	provisionType = "cloud.olvm.provision"
+}
+
+resource "scale-action" "olvm-oel-7_9-single" {
+	code = "olvm-oel-7.9-single"
+	scaleType = "action"
+	layout = instance-type-layout.olvm-oel-7_9-single
+	upAction {
+		code = "generic-add-node"
+	}
+	downAction {
+		code = "generic-remove-node"
+	}
+}

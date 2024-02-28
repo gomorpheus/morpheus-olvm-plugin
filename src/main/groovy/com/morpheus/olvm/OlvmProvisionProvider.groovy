@@ -1,12 +1,14 @@
 package com.morpheus.olvm
 
 import com.morpheus.olvm.util.OlvmComputeUtility
+import com.morpheusdata.PrepareHostResponse
 import com.morpheusdata.core.AbstractProvisionProvider
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.Plugin
 import com.morpheusdata.core.data.DataFilter
 import com.morpheusdata.core.data.DataQuery
 import com.morpheusdata.core.providers.CloudProvider
+import com.morpheusdata.core.providers.VmProvisionProvider
 import com.morpheusdata.core.providers.WorkloadProvisionProvider
 import com.morpheusdata.core.util.ComputeUtility
 import com.morpheusdata.core.util.MorpheusUtils
@@ -14,7 +16,12 @@ import com.morpheusdata.model.Account
 import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.ComputeCapacityInfo
 import com.morpheusdata.model.ComputeServer
+import com.morpheusdata.model.ComputeServerInterface
+import com.morpheusdata.model.HostType
 import com.morpheusdata.model.Icon
+import com.morpheusdata.model.Instance
+import com.morpheusdata.model.NetAddress
+import com.morpheusdata.model.Network
 import com.morpheusdata.model.OptionType
 import com.morpheusdata.model.ServicePlan
 import com.morpheusdata.model.StorageVolume
@@ -22,17 +29,20 @@ import com.morpheusdata.model.StorageVolumeType
 import com.morpheusdata.model.VirtualImage
 import com.morpheusdata.model.VirtualImageLocation
 import com.morpheusdata.model.Workload
+import com.morpheusdata.model.provisioning.HostRequest
 import com.morpheusdata.model.provisioning.NetworkConfiguration
 import com.morpheusdata.model.provisioning.WorkloadRequest
+import com.morpheusdata.request.ResizeRequest
 import com.morpheusdata.response.PrepareWorkloadResponse
 import com.morpheusdata.response.ProvisionResponse
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
 import org.ovirt.engine.sdk4.Connection
 import org.ovirt.engine.sdk4.internal.containers.TemplateContainer
+import org.ovirt.engine.sdk4.types.VmStatus
 
 @Slf4j
-class OlvmProvisionProvider extends AbstractProvisionProvider implements WorkloadProvisionProvider {
+class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvisionProvider, WorkloadProvisionProvider, WorkloadProvisionProvider.ResizeFacet {
 	public static final String PROVISION_PROVIDER_CODE = 'cloud.olvm.provision'
 
 	protected MorpheusContext context
@@ -377,6 +387,31 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 		return false
 	}
 
+	@Override
+	ServiceResponse validateHost(ComputeServer computeServer, Map map) {
+		return ServiceResponse.success()
+	}
+
+	@Override
+	ServiceResponse<ProvisionResponse> waitForHost(ComputeServer server) {
+		return super.waitForHost(server)
+	}
+
+	@Override
+	ServiceResponse<PrepareHostResponse> prepareHost(ComputeServer computeServer, HostRequest hostRequest, Map map) {
+		return ServiceResponse.success()
+	}
+
+	@Override
+	ServiceResponse<ProvisionResponse> runHost(ComputeServer computeServer, HostRequest hostRequest, Map map) {
+		return ServiceResponse.success()
+	}
+
+	@Override
+	ServiceResponse finalizeHost(ComputeServer computeServer) {
+		return ServiceResponse.success()
+	}
+
 	/**
 	 * Determines if this provision type has datastores that can be selected or not.
 	 * @return Boolean representation of whether or not this provision type has datastores
@@ -485,6 +520,15 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 		return true
 	}
 
+	/**
+	* Returns the host type that is to be provisioned
+	* @return HostType
+	*/
+	@Override
+	HostType getHostType() {
+		HostType.vm
+	}
+
 	@Override
 	ArrayList<OptionType> getDefaultInstanceTypeOptions() {
 		Collection<OptionType> options = []
@@ -581,6 +625,199 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 		}
 	}
 
+	/**
+	 * Request to scale the size of the Workload. Most likely, the implementation will follow that of resizeServer
+	 * as the Workload usually references a ComputeServer. It is up to implementations to create the volumes, set the memory, etc
+	 * on the underlying ComputeServer in the cloud environment. In addition, implementations of this method should
+	 * add, remove, and update the StorageVolumes, StorageControllers, ComputeServerInterface in the cloud environment with the requested attributes
+	 * and then save these attributes on the models in Morpheus. This requires adding, removing, and saving the various
+	 * models to the ComputeServer using the appropriate contexts. The ServicePlan, memory, cores, coresPerSocket, maxStorage values
+	 * defined on ResizeRequest will be set on the Workload and ComputeServer upon return of a successful ServiceResponse
+	 * @param instance to resize
+	 * @param workload to resize
+	 * @param resizeRequest the resize requested parameters
+	 * @param opts additional options
+	 * @return Response from API
+	 */
+	@Override
+	ServiceResponse resizeWorkload(Instance instance, Workload workload, ResizeRequest resizeRequest, Map opts) {
+		def server = morpheus.async.computeServer.get(workload.server.id).blockingGet()
+		if(server) {
+			return internalResizeServer(server, resizeRequest, opts)
+		} else {
+			return ServiceResponse.error("No server provided")
+		}
+	}
+
+	private ServiceResponse internalResizeServer(ComputeServer server, ResizeRequest resizeRequest, Map opts) {
+		def rtn = [success:false, supported:true]
+		def amazonOpts = [server:server]
+		Connection connection = opts.connection
+		def closeConnection = false
+		Cloud cloud = server.cloud
+		ServicePlan plan = resizeRequest.plan
+		try {
+			if (!connection) {
+				connection = OlvmComputeUtility.getConnection(cloud)
+				closeConnection = true
+			}
+			def serverId = server.id
+
+			def statusResults = OlvmComputeUtility.waitForSomeStuffToHappen([label:"Waiting for vm to stop"]) {
+				return connection.systemService().vmsService().vmService(server.externalId).get().send().vm().status() == VmStatus.DOWN
+			}
+
+			if(statusResults.success == true) {
+				//instance size
+				if (plan?.id != server.plan?.id) {
+					amazonOpts.flavorId = plan.externalId
+					log.info("Resizing Plan")
+					OlvmComputeUtility.updateVmProperties([connection:connection, vm:[id:server.externalId, memory:plan.maxMemory, cores:plan.maxCores, coresPerSocket:plan.coresPerSocket]])
+					server.plan = plan
+					server.maxMemory = plan.maxMemory
+					server.maxCores = plan.maxCores
+					server.setConfigProperty('maxMemory', plan.maxMemory)
+					server = saveAndGet(server)
+				}
+
+				//disk sizes
+				def maxStorage = resizeRequest.maxStorage
+				def newCounter = server.volumes?.size()
+				def volumeType = morpheus.async.storageVolume.storageVolumeType.find(
+					 new DataQuery().withFilters(new DataFilter<String>('code', 'olvm-standard'))
+				).blockingGet()
+
+				resizeRequest.volumesAdd?.each {newVolumeProps ->
+					log.info("Adding New Volume")
+					def deviceName = OlvmComputeUtility.getDeviceName(newCounter)
+					def addDiskResult = OlvmComputeUtility.addDiskToVm([
+						connection:connection, vmId:server.externalId,
+						disk:[
+							maxStorage:newVolumeProps.maxStorage, name:newVolumeProps.name, datastore:[externalId:newVolumeProps.datastoreId],
+							deviceName:deviceName
+						]
+					])
+
+					def newDisk = addDiskResult.data
+
+					def newVolume = new StorageVolume(
+						refType: 'ComputeZone',
+						refId: cloud.id,
+						account: server.account,
+						maxStorage: newVolumeProps.maxStorage,
+						type: volumeType,
+						externalId:newDisk.externalId,
+						deviceName:deviceName,
+						deviceDisplayName:deviceName,
+						name: newVolumeProps.name,
+						displayOrder: newCounter,
+						status: 'provisioned',
+						rootVolume:false
+					)
+					log.info("Saving Volume")
+					morpheus.async.storageVolume.create([newVolume], server).blockingGet()
+					server = morpheus.async.computeServer.get(server.id).blockingGet()
+					newCounter++
+				}
+
+				resizeRequest.volumesUpdate?.each { volumeUpdate ->
+					log.info("resizing vm storage: count: ${volumeUpdate}")
+					StorageVolume existing = volumeUpdate.existingModel
+					Map updateProps = volumeUpdate.updateProps
+					if (existing) {
+						//existing disk - resize it
+						if (updateProps.maxStorage > existing.maxStorage) {
+							def volumeId = existing.externalId
+							def resizeResults = OlvmComputeUtility.updateDiskSize([
+								connection:connection, disk:[id:volumeId, size:updateProps.maxStorage]
+							])
+							if (resizeResults.success == true) {
+								existing.maxStorage = updateProps.maxStorage.toLong()
+								morpheus.async.storageVolume.save([existing]).blockingGet()
+							} else {
+								rtn.setError("Failed to expand Disk: ${existing.name}")
+							}
+						}
+					}
+				}
+
+				//delete any removed volumes
+				resizeRequest.volumesDelete.each { volume ->
+					log.info("Deleting volume : ${volume.externalId}")
+					def volumeId = volume.externalId
+					def detachResults = OlvmComputeUtility.detachVolume([volumeId:volumeId, vmId: server.externalId, connect:connection])
+					if (detachResults.success == true) {
+						OlvmComputeUtility.deleteVolume([volumeId:volumeId, connection:connection])
+						morpheus.async.storageVolume.remove([volume], server, true).blockingGet()
+					}
+				}
+
+				//TODO: network adapters
+				//controllers
+				resizeRequest?.interfacesAdd?.eachWithIndex { networkAdd, index ->
+					log.info("adding network: ${networkAdd}")
+					def newIndex = server.interfaces?.size()
+					Network networkObj = morpheus.async.network.listById([networkAdd.network.id.toLong()]).firstOrError().blockingGet()
+					def platform = server.platform
+					def nicName
+					if(platform == 'windows') {
+						nicName = (index == 0) ? 'Ethernet' : 'Ethernet ' + (index + 1)
+					} else if(platform == 'linux') {
+						nicName = "eth${index}"
+					} else {
+						nicName = "eth${index}"
+					}
+					def networkConfig = [
+						connection:connection, vmId:server.externalId, networkId:networkObj.externalId, deviceName:nicName
+					]
+					def networkResults = OlvmComputeUtility.addNetworkInterface(networkConfig)
+					if (networkResults.success == true) {
+						def newInterface = new ComputeServerInterface([
+							externalId      : networkResults.data.id(),
+							uniqueId        : "morpheus-nic-${serverId}-${newIndex}",
+							name            : nicName,
+							network         : networkObj,
+							displayOrder    : newIndex,
+							primaryInterface: networkAdd?.network?.isPrimary ? true : false
+						])
+
+						newInterface = morpheus.async.computeServer.computeServerInterface.create(newInterface).blockingGet()
+						server.interfaces += newInterface
+						server = saveAndGet(server)
+					}
+				}
+
+				resizeRequest?.interfacesDelete?.eachWithIndex { networkDelete, index ->
+					def deleteConfig = [
+						connection: connection, vmId: server.externalId, nicId: networkDelete.externalId
+					]
+					def deleteResults = OlvmComputeUtility.deleteNetworkInterface(deleteConfig)
+					if (deleteResults.success == true) {
+						morpheus.async.computeServer.computeServerInterface.remove([networkDelete], server).blockingGet()
+						server = morpheus.async.computeServer.get(server.id).blockingGet()
+					}
+				}
+				rtn.success = true
+			}
+			def vmOpts = [connection:connection, server:server]
+			def startResults = OlvmComputeUtility.startVm(vmOpts)
+			if(startResults.success == true) {
+				// refreshServerIp(server, vmOpts)
+			}
+		}
+		catch(Throwable t) {
+			log.error("Error resizing olvm instance to ${plan.name}", t)
+			rtn.success = false
+			rtn.msg = "Error resizing olvm instance to ${plan.name} ${t.message}"
+			rtn.error= "Error resizing olvm instance to ${plan.name} ${t.message}"
+		}
+		finally {
+			if (closeConnection)
+				connection?.close()
+		}
+		return new ServiceResponse(success: rtn.success, data: [supported: rtn.supported])
+	}
+
 	def finalizeVm(Map runConfig, ProvisionResponse provisionResponse, Map runResults) {
 		log.debug("runTask onComplete: provisionResponse: ${provisionResponse}")
 		ComputeServer server = morpheus.async.computeServer.get(runConfig.serverId).blockingGet()
@@ -673,11 +910,11 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 	ServiceResponse<ProvisionResponse> getServerDetails(ComputeServer server) {
 		ProvisionResponse rtn = new ProvisionResponse()
 		def serverUuid = server.externalId
-		if(server && server.uuid && server.resourcePool?.externalId) {
+		if(server && serverUuid) {
 			Connection connection
 			try {
 				connection = OlvmComputeUtility.getConnection(server.cloud)
-				Map serverDetails = OlvmComputeUtility.checkServerReady([connection:connection, server:server])
+				def serverDetails = OlvmComputeUtility.checkServerReady([connection:connection, server:server])
 				if (serverDetails.success && serverDetails.data) {
 					rtn.externalId = serverUuid
 					rtn.success = serverDetails.success
@@ -993,18 +1230,52 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 		log.debug("create server: ${createResults}")
 		if(createResults.success == true && createResults.data.vmId) {
 			server.externalId = createResults.data.vmId
-			server.powerState = 'on'
 			provisionResponse.externalId = server.externalId
 			server = saveAndGet(server)
 			runConfig.server = server
 
 			OlvmComputeUtility.waitForServerExists([connection:runConfig.connection, server:server])
-			// TODO: add data disks
+
+			// once server exists set entity ids onto our model
+			def vmDetails = OlvmComputeUtility.getServerDetail([connection:runConfig.connection, server:server])
+
+			// change size of the of the root volume and save off id
+			def rootVolume = server.volumes.find { it -> return it.rootVolume }
+			rootVolume.externalId = vmDetails.data.disks.find { d -> return d.bootable == true }.id
+			rootVolume = saveAndGetVolume(rootVolume)
+			OlvmComputeUtility.updateDiskSize([
+				connection:runConfig.connection, disk:[id:rootVolume.externalId, size:rootVolume.maxStorage]
+			])
+
+			// add data disks via cloud api, then save off disk ids
+			if (runConfig.dataDisks?.size() > 0) {
+				def dataDiskResp = OlvmComputeUtility.addDisksToVm([
+					connection: runConfig.connection, vmId: server.externalId,
+					disks     : runConfig.dataDisks
+				])
+
+				for (StorageVolume vol in runConfig.dataDisks) {
+					def cloudDisk = dataDiskResp.data.disks.find { it -> return it.name == vol.name }
+					vol.externalId = cloudDisk.externalId
+					saveAndGetVolume(vol)
+				}
+			}
+
+			// add extra interfaces to vm
+			if (runConfig.networkConfig.extraInterfaces) {
+				def addResp = OlvmComputeUtility.addNicsToVm([
+					connection:runConfig.connection, nics:runConfig.networkConfig.extraInterfaces, vmId:server.externalId
+				])
+
+				for (nic in addResp.data) {
+					saveAndGetNic(nic)
+				}
+			}
 
 			// start vm for the first time
 			OlvmComputeUtility.startVmWithCloudInit([connection:runConfig.connection, server:server, cloudInitScript:runConfig.cloudConfig])
 
-			//wait for ready
+			// wait for ready
 			def statusResults = OlvmComputeUtility.checkServerReady(runConfig)
 			if(statusResults.success == true) {
 				//good to go
@@ -1057,5 +1328,19 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements Workloa
 			log.warn("Error saving server: ${server?.id}" )
 		}
 		return morpheus.async.computeServer.get(server.id).blockingGet()
+	}
+
+	protected StorageVolume saveAndGetVolume(StorageVolume volume) {
+		def saveSuccessful = morpheus.async.storageVolume.save(volume).blockingGet()
+		if (!saveSuccessful)
+			log.warn("Error saving storage volume: ${volume.id}")
+		return morpheus.async.storageVolume.get(volume.id).blockingGet()
+	}
+
+	protected ComputeServerInterface saveAndGetNic(ComputeServerInterface nic) {
+		def saveSuccessful = morpheus.async.computeServer.computeServerInterface.save(nic).blockingGet()
+		if (!saveSuccessful)
+			log.warn("Error saving network interface: ${nic.internalId}")
+		return morpheus.async.computeServer.computeServerInterface.get(nic.id).blockingGet()
 	}
 }

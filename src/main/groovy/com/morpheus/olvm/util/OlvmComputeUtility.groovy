@@ -2,12 +2,16 @@ package com.morpheus.olvm.util
 
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.model.Cloud
+import com.morpheusdata.model.ComputeServerInterface
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
 import org.ovirt.engine.sdk4.Connection
 import org.ovirt.engine.sdk4.builders.CpuBuilder
 import org.ovirt.engine.sdk4.builders.NicBuilder
 import org.ovirt.engine.sdk4.services.SystemService
+import org.ovirt.engine.sdk4.types.DiskFormat
+import org.ovirt.engine.sdk4.types.DiskInterface
+import org.ovirt.engine.sdk4.types.DiskStatus
 import org.ovirt.engine.sdk4.types.IpVersion
 import org.ovirt.engine.sdk4.types.Nic
 import org.ovirt.engine.sdk4.types.VmStatus
@@ -318,12 +322,11 @@ class OlvmComputeUtility {
         try {
             def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
 
-            // wait for the VM to be up
             // Locate the service that manages the NICs of the virtual machine:
             def nicsService = vmService.nicsService()
 
-            // Use the "add" method of the disks service to add the disk:
-            nicsService.add()
+            // Use the "add" method of the nics service to add the disk:
+            def nic = nicsService.add()
                 .nic(
                     nic()
                     .name(opts.deviceName)
@@ -332,11 +335,34 @@ class OlvmComputeUtility {
                         .id(opts.networkId)
                     )
                 )
-                .send()
+                .send().nic()
+
+            rtn.success = true
+            rtn.data = nic
+        }
+        catch (Throwable t) {
+            log.error("Unable to add network interface: ${t.message}", t)
+            rtn.error = "Unable to add network interface: ${t.message}"
         }
         finally {
             if (closeConnection)
                 connection?.close()
+        }
+        return rtn
+    }
+
+    static deleteNetworkInterface(opts) {
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        try {
+            def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
+            def nicService = vmService.nicsService().nicService(opts.nicId)
+            nicService.remove().send()
+        }
+        catch (Throwable t) {
+            log.error("Unable to delete network interface ${opts.nicId}: ${t.message}", t)
+            rtn.error = "Unable to delete network interface ${opts.nicId}: ${t.message}"
         }
         return rtn
     }
@@ -389,7 +415,8 @@ class OlvmComputeUtility {
                     ipV4:[],
                     ipV6:[],
                     status:vm.status().toString(),
-                    disks:[]
+                    disks:[],
+                    nics:[]
                 ]
 
                 // add ip address to vm details
@@ -412,7 +439,18 @@ class OlvmComputeUtility {
                         name:disk.name(),
                         id:disk.id(),
                         status:disk.status().toString(),
-                        size:disk.provisionedSize()
+                        size:disk.provisionedSize(),
+                        bootable:diskAttachment.bootable()
+                    ]
+                }
+
+                // add nics to vm details
+                for (nic in vmService.nicsService().list().send().nics()) {
+                    def cloudNic = connection.followLink(nic)
+                    vmMap.nics << [
+                        name:cloudNic.name(),
+                        id:cloudNic.id(),
+                        networkId:cloudNic.vnicProfile().id()
                     ]
                 }
                 rtn.data = vmMap
@@ -421,6 +459,316 @@ class OlvmComputeUtility {
         }
         catch(Throwable t) {
             log.error("getServerDetail error: ${t}", t)
+        }
+        finally {
+            if (closeConnection)
+                connection?.close()
+        }
+        return rtn
+    }
+
+    static updateDiskSize(opts) {
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
+
+            def diskService = connection.systemService().disksService().diskService(opts.disk.id)
+            def cloudDisk = diskService.get().send().disk()
+
+            // cannot down size a disk, so only run if its sizing up
+            if (cloudDisk.provisionedSize() < opts.disk.size) {
+                def updateResponse = diskService.update().disk(
+                    disk()
+                        .id(opts.disk.id)
+                        .provisionedSize(opts.disk.size)
+                )
+                    .send()
+
+                // wait for the disk update to complete
+                waitForSomeStuffToHappen([label: "Resize disk ${opts.disk.id}"]) {
+                    // need to wait for disk status before we move on
+                    log.debug("checking status on disk ${opts.disk.id}")
+                    return diskService.get().send().disk().status() == DiskStatus.OK
+                }
+            }
+            rtn.success = true
+        }
+        catch (Throwable t) {
+            log.error("Unable to resize disk: ${t.message}", t)
+            rtn.error = "Unable to resize disk: ${t.message}"
+        }
+        finally {
+            if (closeConnection)
+                connection?.close()
+        }
+        return rtn
+    }
+
+    static addDisksToVm(opts) {
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        def vmId = opts.vm?.id ?: opts.vmId
+        try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
+
+            def attachedDisks = []
+            for (vol in opts.disks) {
+                def diskAddResults = addDiskToVm([
+                    connection:connection, vmId:vmId, disk:vol
+                ])
+
+                // once ok.... going to set externalId on disk before returning
+                if (diskAddResults.success) {
+                    attachedDisks << [externalId:diskAddResults.data.externalId, name:vol.name, size:vol.maxStorage, device:vol.deviceName]
+                }
+            }
+            rtn.success = true
+            rtn.data = [disks:attachedDisks]
+        }
+        catch (Throwable t) {
+            log.error("Failed to add disks to vm ${vmId}:${t.message}", t)
+            rtn.error = "Failed to add disks to vm ${vmId}:${t.message}"
+        }
+        finally {
+            if (closeConnection)
+                connection?.close()
+        }
+        return rtn
+    }
+
+    static addDiskToVm(opts) {
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        def vmId = opts.vm?.id ?: opts.vmId
+        try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
+
+            // Locate the service that manages the disk attachments of the virtual machine:
+            def diskAttachmentsService = connection.systemService().vmsService().vmService(vmId).diskAttachmentsService()
+
+            def diskAttachment = diskAttachmentsService.add()
+                .attachment(
+                    diskAttachment()
+                        .disk(
+                            disk()
+                                .name(opts.disk.name)
+                                .description("Device ${opts.disk.deviceName}")
+                                .format(DiskFormat.COW)
+                                .provisionedSize(BigInteger.valueOf(opts.disk.maxStorage))
+                                .storageDomains(
+                                    storageDomain()
+                                        .id(opts.disk.datastore.externalId)
+                                )
+                        )
+                        .interface_(DiskInterface.VIRTIO)
+                        .bootable(false)
+                        .active(true)
+                )
+                .send()
+                .attachment()
+
+            // wait for disk to be OK
+            def diskId = diskAttachment.disk().id()
+            def diskService = connection.systemService().disksService().diskService(diskId)
+            waitForSomeStuffToHappen([label:"Waiting for disk(${diskId}) to be ready"]) {
+                return diskService.get().send().disk().status() == DiskStatus.OK
+            }
+
+            // once disk has been added, set new disk id to return object
+            opts.disk.externalId = diskId
+            rtn.success = true
+            rtn.data = opts.disk
+        }
+        catch (Throwable t) {
+
+        }
+        finally {
+            if (closeConnection)
+                connection?.close()
+        }
+        return rtn
+    }
+
+    static detachVolume(opts) {
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        def vmId = opts.vm?.id ?: opts.vmId
+        try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
+
+            def vmService = connection.systemService().vmsService().vmService(vmId)
+            def vm = vmService.get().send().vm()
+
+            // find our disk attachment
+            def attachment = vm.diskAttachments().find { attachment ->
+                return attachment.disk().id() == opts.volumeId
+            }
+
+            def diskAttachmentService = vmService.diskAttachmentsService().attachmentService(attachment.id())
+            diskAttachmentService.remove().detachOnly(true).send()
+
+            rtn.success = true
+        }
+        catch (Throwable t) {
+            log.error("Unable to detach volume ${opts.volumeId}")
+            rtn.error = "Unable to detach volume ${opts.volumeId}"
+        }
+        finally {
+            if (closeConnection)
+                connection?.close()
+        }
+        return rtn
+    }
+
+    static deleteVolume(opts) {
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
+
+            def diskService = connection.systemService().disksService().diskService(opts.volumeId)
+            diskService.remove().send()
+            rtn.success = true
+        }
+        catch (Throwable t) {
+            log.error("Unable to remove volume ${opts.volumeId}")
+            rtn.error = "Unable to remove volume ${opts.volumeId}"
+        }
+        finally {
+            if (closeConnection)
+                connection?.close()
+        }
+        return rtn
+    }
+
+    static addNicToVm(opts) {
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        def vmId = opts.vm?.id ?: opts.vmId
+        try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
+            def nicsService = connection.systemService().vmsService().vmService(vmId).nicsService()
+            ComputeServerInterface nic = opts.nic
+            nicsService.add().nic(
+                nic()
+                .name(nic.name)
+                .vnicProfile(
+                    vnicProfile()
+                    .id(nic.network.externalId)
+                )
+            ).send()
+            rtn.success = true
+        }
+        catch (Throwable t) {
+            log.error("Unable to add network interface: ${t.message}", t)
+            rtn.error = "Unable to add network interface: ${t.message}"
+        }
+        finally {
+            if (closeConnection)
+                connection?.close()
+        }
+        return rtn
+    }
+
+    static updateVmProperties(opts) {
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        def vmId = opts.vm?.id ?: opts.vmId
+        try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
+
+            def vmService = connection.systemService().vmsService().vmService(opts.vm.id)
+            def vmBuilder = vm().id(opts.vmId)
+
+            if (opts.vm.name)
+                vmBuilder.name(opts.vm.name)
+
+            if (opts.vm.memory)
+                vmBuilder.memory(opts.vm.memory.toLong())
+
+            if (opts.vm.maxCores)
+                vmBuilder.cpu(buildCpus(opts.vm))
+
+            vmService.update().vm(vmBuilder).send()
+
+            waitForSomeStuffToHappen([label:"waiting for vm (${opts.vm.id}) to save"]) {
+                return vmService.get().send().vm().status() != VmStatus.SAVING_STATE
+            }
+
+            rtn.success = true
+            rtn.data = vmService.get().send().vm()
+        }
+        catch (Throwable t) {
+            log.error("Unable to update vm ${opts.vm.name}: ${t.message}", t)
+            rtn.error = "Unable to update vm ${opts.vm.name}: ${t.message}"
+        }
+        finally {
+            if (closeConnection)
+                connection?.close()
+        }
+    }
+
+    static addNicsToVm(opts) {
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        def vmId = opts.vm?.id ?: opts.vmId
+        try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
+
+            // add all nics in opts.nics
+            def nicsService = connection.systemService().vmsService().vmService(vmId).nicsService()
+
+            for (ComputeServerInterface networkInterface in opts.nics) {
+                def addResponse = nicsService.add().nic(
+                    nic()
+                    .name(networkInterface.name)
+                    .vnicProfile(
+                        vnicProfile()
+                        .id(networkInterface.network.externalId)
+                    )
+                ).send()
+                networkInterface.externalId = addResponse.nic().id()
+            }
+
+            rtn.success = true
+            rtn.data = opts.nics
+        }
+        catch (Throwable t) {
+            log.error("Unable to add network interfaces to vm: ${t.message}", t)
+            rtn.error = "Unable to add network interfaces to vm: ${t.message}"
         }
         finally {
             if (closeConnection)
@@ -565,7 +913,7 @@ class OlvmComputeUtility {
     }
 
     static getDeviceName(Integer index) {
-        return "/dev/sda${BLOCK_DEVICE_LIST[index]}".toString()
+        return "/dev/vd${BLOCK_DEVICE_LIST[index]}".toString()
     }
 
     public static final List BLOCK_DEVICE_LIST = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l']

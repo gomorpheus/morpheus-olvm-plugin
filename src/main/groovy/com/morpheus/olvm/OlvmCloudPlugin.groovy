@@ -16,9 +16,11 @@
 package com.morpheus.olvm
 
 import com.morpheusdata.core.Plugin
+import com.morpheusdata.core.backup.BackupProvider
 import com.morpheusdata.core.providers.CloudProvider
 
 class OlvmCloudPlugin extends Plugin {
+    String backupProviderCode
 
     @Override
     String getCode() {
@@ -31,6 +33,8 @@ class OlvmCloudPlugin extends Plugin {
         this.registerProvider(new OlvmCloudProvider(this,this.morpheus))
         this.registerProvider(new OlvmProvisionProvider(this,this.morpheus))
         this.registerProvider(new OlvmOptionSourceProvider(this, this.morpheus))
+        def backupProvider = new OlvmBackupProvider(this, this.morpheus)
+        backupProviderCode = backupProvider.code
     }
 
     /**
@@ -43,5 +47,9 @@ class OlvmCloudPlugin extends Plugin {
 
     CloudProvider getCloudProvider() {
         return this.getProviderByCode(OlvmCloudProvider.CLOUD_PROVIDER_CODE)
+    }
+
+    BackupProvider getBackupProvider() {
+        return this.getProviderByCode(backupProviderCode)
     }
 }

@@ -8,12 +8,15 @@ import groovy.util.logging.Slf4j
 import org.ovirt.engine.sdk4.Connection
 import org.ovirt.engine.sdk4.builders.CpuBuilder
 import org.ovirt.engine.sdk4.builders.NicBuilder
+import org.ovirt.engine.sdk4.internal.containers.SnapshotContainer
 import org.ovirt.engine.sdk4.services.SystemService
 import org.ovirt.engine.sdk4.types.DiskFormat
 import org.ovirt.engine.sdk4.types.DiskInterface
 import org.ovirt.engine.sdk4.types.DiskStatus
+import org.ovirt.engine.sdk4.types.ImageTransferDirection
 import org.ovirt.engine.sdk4.types.IpVersion
 import org.ovirt.engine.sdk4.types.Nic
+import org.ovirt.engine.sdk4.types.SnapshotStatus
 import org.ovirt.engine.sdk4.types.VmStatus
 
 import static org.ovirt.engine.sdk4.ConnectionBuilder.connection
@@ -23,8 +26,10 @@ import static org.ovirt.engine.sdk4.builders.Builders.cpu
 import static org.ovirt.engine.sdk4.builders.Builders.cpuTopology
 import static org.ovirt.engine.sdk4.builders.Builders.disk
 import static org.ovirt.engine.sdk4.builders.Builders.diskAttachment
+import static org.ovirt.engine.sdk4.builders.Builders.imageTransfer
 import static org.ovirt.engine.sdk4.builders.Builders.initialization
 import static org.ovirt.engine.sdk4.builders.Builders.nic
+import static org.ovirt.engine.sdk4.builders.Builders.snapshot
 import static org.ovirt.engine.sdk4.builders.Builders.storageDomain
 import static org.ovirt.engine.sdk4.builders.Builders.template
 import static org.ovirt.engine.sdk4.builders.Builders.vm
@@ -302,6 +307,11 @@ class OlvmComputeUtility {
         try {
             def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
             vmService.stop().send()
+
+            def xfer = connection.systemService().imageTransfersService().addForImage(
+                imageTransfer()
+                .direction(ImageTransferDirection.UPLOAD)
+            ).send().imageTransfer()
 
             // wait for the VM to be up
             rtn = waitForSomeStuffToHappen([label:"Start vm ${opts.server?.name}", timeout:(5l * 60l * 1000l)]) {
@@ -795,6 +805,95 @@ class OlvmComputeUtility {
             def vmService = connection.systemService().vmsService().vmService(vmId)
             vmService.remove().send()
             rtn.success = true
+        }
+        finally {
+            if (closeConnection)
+                connection?.close()
+        }
+        return rtn
+    }
+
+    static snapshotVm(opts) {
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
+
+            def snapshotsService = connection.systemService().vmsService().vmService(opts.vmId).snapshotsService()
+            SnapshotContainer snap = snapshotsService.add().snapshot(
+                snapshot()
+                .description(opts.description ?: 'A morpheus initiated snapshot')
+            ).send().snapshot()
+
+            def snapshotService = snapshotsService.snapshotService(snap.id())
+            waitForSomeStuffToHappen([label:"Waiting for snapshot(${snap.id()}) to be ready"]) {
+                return snapshotService.get().send().snapshot().snapshotStatus() == SnapshotStatus.OK
+            }
+            rtn.data = [id:snap.id(), status:SnapshotStatus.OK.value()]
+            rtn.success = true
+        }
+        catch (Throwable t) {
+            log.error("Error creating snapshot for vm (${opts.vmId}): ${t.message}", t)
+            rtn.error = "Error creating snapshot for vm (${opts.vmId}): ${t.message}"
+        }
+        finally {
+            if (closeConnection)
+                connection?.close()
+        }
+        return rtn
+    }
+
+    static getSnapshot(opts) {
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
+            def snapshotService = connection.systemService().vmsService().vmService(opts.vmId).snapshotsService().snapshotService(opts.snapshotId)
+            def snap = snapshotService.get().send().snapshot()
+            rtn.data = snap
+            rtn.success = true
+        }
+        catch (Throwable t) {
+            log.error("Unable to get snapshot info for ${opts.snapshotId}: ${t.message}", t)
+            rtn.error = "Unable to get snapshot info for ${opts.snapshotId}: ${t.message}"
+        }
+        finally {
+            if (closeConnection)
+                connection?.close()
+        }
+        return rtn
+    }
+
+    static restoreSnapshot(opts) {
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
+
+            def vmService = connection.systemService().vmsService().vmService(opts.vmId)
+            def snapshotService = vmService.snapshotsService().snapshotService(opts.snapshotId)
+            snapshotService.restore().send()
+
+            waitForSomeStuffToHappen([label:"Waiting for vm restore(${opts.vmId}) to be ready"]) {
+                return vmService.get().send().vm().status() != VmStatus.IMAGE_LOCKED
+            }
+            rtn.success = true
+        }
+        catch (Throwable t) {
+            log.error("Unable to restore snapshot(${opts.snapshotId}): ${t.message}", t)
+            rtn.error = "Unable to restore snapshot(${opts.snapshotId}): ${t.message}"
         }
         finally {
             if (closeConnection)

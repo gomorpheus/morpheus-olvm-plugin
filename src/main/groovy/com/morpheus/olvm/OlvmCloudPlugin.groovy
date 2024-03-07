@@ -35,6 +35,7 @@ class OlvmCloudPlugin extends Plugin {
         this.registerProvider(new OlvmOptionSourceProvider(this, this.morpheus))
         def backupProvider = new OlvmBackupProvider(this, this.morpheus)
         backupProviderCode = backupProvider.code
+        this.registerProvider(backupProvider)
     }
 
     /**

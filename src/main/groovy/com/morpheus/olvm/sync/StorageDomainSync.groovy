@@ -41,9 +41,10 @@ class StorageDomainSync {
 
             // NOTE: for now just syncing all storage domains
             def olvmStorageDomains = OlvmComputeUtility.listStorageDomains([connection:connection]).data.storageDomains
-            Observable<DatastoreIdentity> domainRecords = morpheusContext.async.cloud.datastore.listIdentityProjections(
+            /*Observable<DatastoreIdentity> domainRecords = morpheusContext.async.cloud.datastore.listIdentityProjections(
                 new DataQuery().withFilters(new DataFilter<String>('cloud.id', cloud.id))
-            )
+            )*/
+            Observable<DatastoreIdentity> domainRecords = morpheusContext.async.cloud.datastore.listSyncProjections(cloud.id)
             SyncTask<DatastoreIdentity,StorageDomainContainer,Datastore> syncTask = new SyncTask<>(domainRecords, olvmStorageDomains)
             syncTask.addMatchFunction { DatastoreIdentity domainObject, StorageDomainContainer cloudItem ->
                 return domainObject.externalId == cloudItem.id()

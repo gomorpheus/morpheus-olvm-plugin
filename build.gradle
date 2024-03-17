@@ -51,6 +51,9 @@ dependencies {
 	provided "com.morpheusdata:morpheus-plugin-api:$morpheusApiVersion"
 	
 	provided "org.codehaus.groovy:groovy-all:$groovyVersion"
+	provided("com.bertramlabs.plugins:karman-core:${karmanVersion}") {
+		exclude module: 'groovy-all'
+	}
 	implementation 'commons-beanutils:commons-beanutils:1.9.3'
 	implementation "org.slf4j:slf4j-api:$slf4jVersion"
 	implementation "org.slf4j:slf4j-parent:$slf4jVersion"

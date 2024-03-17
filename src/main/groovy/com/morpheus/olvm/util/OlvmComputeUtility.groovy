@@ -1,6 +1,10 @@
 package com.morpheus.olvm.util
 
+import com.bertramlabs.plugins.karman.CloudFile
 import com.morpheusdata.core.MorpheusContext
+import com.morpheusdata.core.util.ComputeUtility
+import com.morpheusdata.core.util.HttpApiClient
+import com.morpheusdata.core.util.ProgressInputStream
 import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.ComputeServerInterface
 import com.morpheusdata.response.ServiceResponse
@@ -8,16 +12,25 @@ import groovy.util.logging.Slf4j
 import org.ovirt.engine.sdk4.Connection
 import org.ovirt.engine.sdk4.builders.CpuBuilder
 import org.ovirt.engine.sdk4.builders.NicBuilder
+import org.ovirt.engine.sdk4.internal.containers.ImageTransferContainer
 import org.ovirt.engine.sdk4.internal.containers.SnapshotContainer
 import org.ovirt.engine.sdk4.services.SystemService
 import org.ovirt.engine.sdk4.types.DiskFormat
 import org.ovirt.engine.sdk4.types.DiskInterface
 import org.ovirt.engine.sdk4.types.DiskStatus
 import org.ovirt.engine.sdk4.types.ImageTransferDirection
+import org.ovirt.engine.sdk4.types.ImageTransferPhase
 import org.ovirt.engine.sdk4.types.IpVersion
 import org.ovirt.engine.sdk4.types.Nic
 import org.ovirt.engine.sdk4.types.SnapshotStatus
+import org.ovirt.engine.sdk4.types.TemplateStatus
 import org.ovirt.engine.sdk4.types.VmStatus
+
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
+import java.security.cert.X509Certificate
 
 import static org.ovirt.engine.sdk4.ConnectionBuilder.connection
 import static org.ovirt.engine.sdk4.builders.Builders.cluster
@@ -26,6 +39,7 @@ import static org.ovirt.engine.sdk4.builders.Builders.cpu
 import static org.ovirt.engine.sdk4.builders.Builders.cpuTopology
 import static org.ovirt.engine.sdk4.builders.Builders.disk
 import static org.ovirt.engine.sdk4.builders.Builders.diskAttachment
+import static org.ovirt.engine.sdk4.builders.Builders.image
 import static org.ovirt.engine.sdk4.builders.Builders.imageTransfer
 import static org.ovirt.engine.sdk4.builders.Builders.initialization
 import static org.ovirt.engine.sdk4.builders.Builders.nic
@@ -174,6 +188,240 @@ class OlvmComputeUtility {
         return rtn
     }
 
+    static insertImage(opts) {
+        log.debug("createServer opts: ${opts}")
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        try {
+            if (!connection) {
+                connection getConnection(opts.cloud)
+                closeConnection = true
+            }
+
+            // first lets see if our image exists in olvm cloud
+            def vi = opts.image.virtualImage
+            def imageName = vi.name.replaceAll(' ', '_')
+            def templatesService = connection.systemService().templatesService()
+            def existing = templatesService.list().search("name=${imageName}".toString()).send().templates()
+            if (existing.size() > 0) {
+                rtn.success = true
+                rtn.data = [imageRef:existing.first().id()]
+            }
+            else {
+                // grab domain service for the storage domain we wish to use
+                def storageDomainService = connection.systemService().storageDomainsService().storageDomainService(opts.storageDomainId)
+
+                // create a blank disk
+                def tmpDiskName = "morph_tmp_${opts.image.virtualImage.id}"
+                def blank = storageDomainService.disksService().add().disk(
+                    disk()
+                        .name(tmpDiskName)
+                        .format(DiskFormat.COW)
+                        .provisionedSize(100 * ComputeUtility.ONE_GIGABYTE)
+                        .storageDomain(
+                            storageDomain()
+                                .id(opts.storageDomainId)
+                        )
+                ).send().disk()
+
+                // Wait for disk to be ready before we start data transfer
+                waitForSomeStuffToHappen([label: "Waiting for blank disk to be ready"]) {
+                    def emptyDisk = connection.followLink(blank)
+                    return emptyDisk.status() == DiskStatus.OK
+                }
+
+                // create an image transfer session
+                def blankDiskId = blank.id()
+                def xfersService = connection.systemService().imageTransfersService()
+                def transferObj = xfersService.addForDisk().imageTransfer(
+                    imageTransfer()
+                        .direction(ImageTransferDirection.UPLOAD)
+                        .inactivityTimeout(15 * 60) // in seconds
+                        .image(
+                            image()
+                                .id(blankDiskId)
+                        )
+                ).send().imageTransfer()
+                def xferId = transferObj.id()
+                def xferService = xfersService.imageTransferService(xferId)
+
+                // wait for the image transfer session to hit the transferring state
+                ImageTransferContainer imageXfer
+                waitForSomeStuffToHappen([label: "Waiting for image transfer to go TRANSFERRING"]) {
+                    imageXfer = xferService.get().send().imageTransfer()
+                    log.debug("Image transfer phase is ${imageXfer.phase()}")
+                    return imageXfer.phase() == ImageTransferPhase.TRANSFERRING
+                }
+
+                // Now push the file contents of our qcow file to OLVM
+                def transferUrl = new URL(imageXfer.proxyUrl())
+                CloudFile cloudFile = opts.image.imageFile
+
+                // TODO: should we use a progress input stream here to update as we upload?
+                pushDataToTarget(cloudFile.inputStream, transferUrl, connection)
+
+                xferService.finalize_().send()
+
+                // after we finalize the transfer wait for the image disk to be ok
+                def disksService = connection.systemService().disksService()
+                def diskService = disksService.diskService(blankDiskId)
+                def actualDiskSize
+                waitForSomeStuffToHappen([label: "Wait for disk ${blank.name()}"]) {
+                    def d = diskService.get().send().disk()
+                    log.debug("Disk ${d.name()}(${d.id()}) statis is ${d.status()}")
+                    actualDiskSize = d.actualSize()
+                    return d.status() == DiskStatus.OK
+                }
+
+                // Next we need to create a temporary VM and attach our disk to it
+                def vmsService = connection.systemService().vmsService()
+                def newVm = vmsService.add().vm(
+                    vm()
+                        .name("morpheus-tmp-${opts.image.virtualImage.id}")
+                        .cluster(
+                            cluster()
+                                .id(opts.clusterRef) // Specify the cluster where you want to create the VM
+                        )
+                        .diskAttachments(
+                            diskAttachment()
+                                .disk(
+                                    disk()
+                                        .id(blankDiskId)
+                                )
+                        )
+                        .template(
+                            template()
+                                .name('Blank')
+                        )
+                ).send().vm()
+
+                // wait for new VM to be ready
+                waitForSomeStuffToHappen([label: "Waiting for vm ${newVm.name()} to be ready"]) {
+                    def v = vmsService.vmService(newVm.id()).get().send().vm()
+                    log.debug("Vm ${v.name()}(${v.id()}) status is ${v.status()}")
+                    return v.status() == VmStatus.DOWN
+                }
+
+                // attach our disk to our temporary vm
+                def diskAttachmentsService = vmsService.vmService(newVm.id()).diskAttachmentsService()
+                def attachment = diskAttachmentsService.add()
+                    .attachment(
+                        diskAttachment()
+                            .disk(
+                                disk()
+                                    .id(blankDiskId)
+                            )
+                            .interface_(DiskInterface.VIRTIO)
+                            .bootable(true)
+                            .active(true)
+                    )
+                    .send().attachment()
+
+                // wait for disk attachment to completes
+                diskService = disksService.diskService(attachment.disk().id())
+                waitForSomeStuffToHappen([label: "Waiting disk ${blankDiskId} to be ready"]) {
+                    def d = diskService.get().send().disk()
+                    log.debug("Disk ${d.name()}(${d.id()}) status is ${d.status()}")
+                    return d.status() == DiskStatus.OK
+                }
+
+                // once vm is created, resize root volume
+                updateDiskSize([connection: connection, disk: [id: blankDiskId, size: actualDiskSize]])
+
+                // create template from this vm
+                def newTemplate = templatesService.add().template(
+                    template()
+                        .vm(
+                            vm()
+                                .id(newVm.id())
+                        )
+                        .name(imageName)
+                ).send().template()
+
+                // wait for template to be usable
+                waitForSomeStuffToHappen([label: "Waiting for template ${imageName} to be ready"]) {
+                    def t = templatesService.templateService(newTemplate.id()).get().send().template()
+                    log.debug("Template ${t.name()}(${t.id()}) status is ${t.status()}")
+                    return t.status() == TemplateStatus.OK
+                }
+
+                // once our template is ready for use, remove our temporary vm
+                deleteServer([connection: connection, vmId: newVm.id()])
+
+                rtn.data = [imageRef: newTemplate.id()]
+                rtn.success = true
+            }
+        }
+        catch(Throwable t) {
+            log.error("Failed to create image template: ${t.message}", t)
+            rtn.error = "Failed to create image template: ${t.message}"
+        }
+        finally {
+            if (closeConnection)
+                connection?.close()
+        }
+        return rtn
+    }
+
+    static pushDataToTarget(InputStream inputStream, URL url, Connection con) {
+        HttpURLConnection connection
+        try {
+            // Install the all-trusting trust manager
+            TrustManager[] trustAllCertificates = new TrustManager[]{
+                new X509TrustManager() {
+                    public X509Certificate[] getAcceptedIssuers() {
+                        return null;
+                    }
+
+                    public void checkClientTrusted(X509Certificate[] certs, String authType) {
+                    }
+
+                    public void checkServerTrusted(X509Certificate[] certs, String authType) {
+                    }
+                }
+            }
+
+            // Create a SSL context with the all-trusting manager
+            SSLContext sslContext = SSLContext.getInstance("SSL")
+            sslContext.init(null, trustAllCertificates, new java.security.SecureRandom())
+
+            // Install the SSL context into the HTTPS URL connection
+            HttpsURLConnection.setDefaultSSLSocketFactory(sslContext.getSocketFactory())
+
+            // Open a connection to the URL
+            connection = (HttpURLConnection) url.openConnection()
+
+            // Set connection properties
+            connection.setRequestMethod("PUT")
+            connection.setDoOutput(true); // Indicates that this connection will send data
+            connection.setRequestProperty("Content-Type", "application/octet-stream")
+            connection.setRequestProperty("Authorization", "Bearer ${con.authenticate()}".toString())
+
+            // Get the OutputStream from the connection
+            OutputStream outputStream = connection.getOutputStream()
+
+            // Define a buffer for reading from the InputStream
+            byte[] buffer = new byte[2048]
+            int bytesRead
+
+            // Read from the InputStream and write to the OutputStream
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, bytesRead)
+            }
+
+            inputStream.close()
+            outputStream.close()
+
+            // Get the response code
+            int responseCode = connection.getResponseCode()
+            log.info("Response Code: ${responseCode}")
+        }
+        finally {
+            connection?.disconnect()
+        }
+    }
+
     static createServer(opts) {
         log.debug("createServer opts: ${opts}")
         def rtn = ServiceResponse.prepare()
@@ -307,11 +555,6 @@ class OlvmComputeUtility {
         try {
             def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
             vmService.stop().send()
-
-            def xfer = connection.systemService().imageTransfersService().addForImage(
-                imageTransfer()
-                .direction(ImageTransferDirection.UPLOAD)
-            ).send().imageTransfer()
 
             // wait for the VM to be up
             rtn = waitForSomeStuffToHappen([label:"Start vm ${opts.server?.name}", timeout:(5l * 60l * 1000l)]) {
@@ -494,10 +737,9 @@ class OlvmComputeUtility {
             if (cloudDisk.provisionedSize() < opts.disk.size) {
                 def updateResponse = diskService.update().disk(
                     disk()
-                        .id(opts.disk.id)
-                        .provisionedSize(opts.disk.size)
-                )
-                    .send()
+                    .id(opts.disk.id)
+                    .provisionedSize(opts.disk.size)
+                ).send()
 
                 // wait for the disk update to complete
                 waitForSomeStuffToHappen([label: "Resize disk ${opts.disk.id}"]) {
@@ -761,7 +1003,7 @@ class OlvmComputeUtility {
             // add all nics in opts.nics
             def nicsService = connection.systemService().vmsService().vmService(vmId).nicsService()
 
-            for (ComputeServerInterface networkInterface in opts.nics) {
+            for (networkInterface in opts.nics) {
                 def addResponse = nicsService.add().nic(
                     nic()
                     .name(networkInterface.name)
@@ -902,6 +1144,33 @@ class OlvmComputeUtility {
         return rtn
     }
 
+    static findQcowFile(Collection fileList) {
+        def rtn
+        if(fileList) {
+            def matchList = []
+            for(CloudFile file in fileList) {
+                def filePath = file.name.toLowerCase();
+                def fileName = getLastPath(filePath)
+				//looking for non tmp file qcow files
+                if((fileName.endsWith('.qcow') == true || fileName.endsWith('qcow2') ) && fileName.startsWith('.') != true)
+                    matchList << file
+            }
+            if(matchList.size() > 0)
+                rtn = matchList[0]
+        }
+        return rtn
+    }
+
+    static getLastPath(String path) {
+        def rtn = path
+        if(path) {
+            def tokens = path.tokenize('/')
+            if(tokens.size() > 0)
+                rtn = tokens[tokens.size() - 1]
+        }
+        return rtn
+    }
+
     static waitForServerExists(opts) {
         Connection connection = opts.connection
         def closeConnection = false
@@ -910,11 +1179,24 @@ class OlvmComputeUtility {
             closeConnection = true
         }
         try {
-            def vmsService = connection.systemService().vmsService()
-            waitForSomeStuffToHappen([label: "Create vm ${opts.name}"]) {
+            def vmService = connection.systemService().vmsService().vmService(opts.server.externalId)
+
+            // first wait for the vm to unlock
+            waitForSomeStuffToHappen([label: "Create vm ${opts.server.name}"]) {
                 // we need to wait till our vm status is equal to DOWN so we know it has finished creating
-                log.debug("checking status on new vm ${opts.name} (${opts.server.externalId})")
-                return vmsService.vmService(opts.server.externalId).get().send().vm().status() == VmStatus.DOWN
+                def status = vmService.get().send().vm().status()
+                log.debug("VM ${opts.server.name}(${opts.server.externalId}) status is ${status.value()}")
+                return status == VmStatus.DOWN
+            }
+
+            // then wait for each disk to be unlocked
+            def diskAttachments = vmService.diskAttachmentsService().list().send().attachments()
+            for (attachment in diskAttachments) {
+                waitForSomeStuffToHappen([label:"Disk status for ${attachment.disk()?.name()}"]) {
+                    def myDisk = connection.followLink(attachment.disk())
+                    log.debug("Disk ${myDisk.name()}() status is ${myDisk.status()}")
+                    return myDisk.status() == DiskStatus.OK
+                }
             }
         }
         finally {

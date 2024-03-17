@@ -4,7 +4,7 @@ resource "virtual-image" "olvm-image-morpheus-oel-7_9" {
 	category = "olvm.plugin.image.morpheus.oel"
 	name = "Morpheus Oracle Linux 7.9"
 	imageType = "ova"
-	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/oel/oel-7_9/morpheus-oel-7.9-v1.ova"
+	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/oel/oel-7_9/OL7U9_x86_64-kvm-b212.qcow"
 	imagePath = "olvm/oel/oel-7_9"
 	isCloudInit = true
 	systemImage = true

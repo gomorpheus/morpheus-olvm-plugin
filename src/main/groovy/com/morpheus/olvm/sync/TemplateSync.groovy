@@ -45,7 +45,7 @@ class TemplateSync {
             def olvmTemplates = connection.systemService().templatesService().list().send().templates()
             Observable<VirtualImageLocationIdentityProjection> domainRecords = morpheusContext.async.virtualImage.location.listIdentityProjections(
                 new DataQuery().withFilters(
-                    new DataFilter<String>("virtualImage.imageType", ImageType.ova.toString()),
+                    new DataFilter<String>("virtualImage.imageType", ImageType.qcow2.toString()),
                     new DataFilter<String>("refType", "ComputeZone"),
                     new DataFilter<String>("refId", cloud.id)
                 )
@@ -79,7 +79,7 @@ class TemplateSync {
         List<String> names = addItems.collect { it.name() }
         Observable<VirtualImageIdentityProjection> existingRecords = morpheusContext.async.virtualImage.listIdentityProjections(
             new DataQuery().withFilters(
-                new DataFilter<String>("imageType", ImageType.ova.toString()),
+                new DataFilter<String>("imageType", ImageType.qcow2.toString()),
                 new DataFilter<Collection<String>>("name", "in", names),
                 new DataOrFilter(
                     new DataFilter<Boolean>("systemImage", true),
@@ -124,7 +124,7 @@ class TemplateSync {
 
             def imageConfig = [
                 category   : "olvm.plugin.template.${cloud.id}", name:name,
-                code       : "olvm.plugin.template.${cloud.id}.${cloudItem.id()}", imageType:ImageType.ova.toString(), externalType:cloudItem.type()?.name() ?: null,
+                code       : "olvm.plugin.template.${cloud.id}.${cloudItem.id()}", imageType:ImageType.qcow2.toString(), externalType:cloudItem.type()?.name() ?: null,
                 description: cloudItem.description(), remotePath:cloudItem.href(),
                 platform   : (cloudItem.os()?.type().contains('windows') ? 'windows' : 'linux'), externalId: cloudItem.id(),
                 isCloudInit: (cloudItem.os()?.type().contains('windows') ? false : true),

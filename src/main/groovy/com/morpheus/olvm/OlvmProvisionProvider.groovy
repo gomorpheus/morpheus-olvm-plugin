@@ -1,5 +1,6 @@
 package com.morpheus.olvm
 
+import com.bertramlabs.plugins.karman.CloudFile
 import com.morpheus.olvm.util.OlvmComputeUtility
 import com.morpheusdata.PrepareHostResponse
 import com.morpheusdata.core.AbstractProvisionProvider
@@ -19,16 +20,19 @@ import com.morpheusdata.model.ComputeServer
 import com.morpheusdata.model.ComputeServerInterface
 import com.morpheusdata.model.HostType
 import com.morpheusdata.model.Icon
+import com.morpheusdata.model.ImageType
 import com.morpheusdata.model.Instance
 import com.morpheusdata.model.NetAddress
 import com.morpheusdata.model.Network
 import com.morpheusdata.model.OptionType
+import com.morpheusdata.model.ProcessEvent
 import com.morpheusdata.model.ServicePlan
 import com.morpheusdata.model.StorageVolume
 import com.morpheusdata.model.StorageVolumeType
 import com.morpheusdata.model.VirtualImage
 import com.morpheusdata.model.VirtualImageLocation
 import com.morpheusdata.model.Workload
+import com.morpheusdata.model.projection.VirtualImageIdentityProjection
 import com.morpheusdata.model.provisioning.HostRequest
 import com.morpheusdata.model.provisioning.NetworkConfiguration
 import com.morpheusdata.model.provisioning.WorkloadRequest
@@ -44,6 +48,10 @@ import org.ovirt.engine.sdk4.types.VmStatus
 @Slf4j
 class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvisionProvider, WorkloadProvisionProvider, WorkloadProvisionProvider.ResizeFacet {
 	public static final String PROVISION_PROVIDER_CODE = 'cloud.olvm.provision'
+	protected static final IMAGE_TIMEOUT = 60l * 60l * 1000l // one hour
+	protected static final IMAGE_TTL = 60l * 60l * 1000l // one hour
+	protected static final DEFAULT_MIN_DISK = 5
+	protected static final DEFAULT_MIN_RAM = 512 * ComputeUtility.ONE_MEGABYTE
 
 	protected MorpheusContext context
 	protected Plugin plugin
@@ -606,7 +614,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			}
 			VirtualImage virtualImage = server.sourceImage
 			def runConfig = buildWorkloadRunConfig(workload, workloadRequest, virtualImage, connection, opts)
-			runVirtualMachine(runConfig, provisionResponse, opts + [connection:connection])
+			runVirtualMachine(cloud, workloadRequest, runConfig, provisionResponse, opts + [connection:connection])
 			log.info("Checking Server Interfaces....")
 			workload.server.interfaces?.each { netInt ->
 				log.info("Net Interface: ${netInt.id} -> Network: ${netInt.network?.id}")
@@ -1191,18 +1199,36 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 
 		log.debug("Setting snapshot image refs opts.snapshotImageRef: ${opts.snapshotImageRef},  ${opts.rootSnapshotId}")
 		// use selected provision image
-		runConfig.imageRef = runConfig.virtualImageLocation.externalId
+		runConfig.imageRef = runConfig.virtualImageLocation?.externalId
 
 		return runConfig
 	}
 
-	protected void runVirtualMachine(Map runConfig, ProvisionResponse provisionResponse, Map opts) {
+	protected void runVirtualMachine(Cloud cloud, WorkloadRequest workloadRequest, Map runConfig, ProvisionResponse provisionResponse, Map opts) {
 		try {
-			// don't think this used
-			// runConfig.template = runConfig.imageId
-			def runResults = insertVm(runConfig, provisionResponse, opts)
-			if(provisionResponse.success) {
-				finalizeVm(runConfig, provisionResponse, runResults)
+			def imageUploadResults = insertImage(cloud, workloadRequest, runConfig)
+			log.info("imageUploadResults: ${imageUploadResults}")
+			if(imageUploadResults.success == true && (imageUploadResults.imageId || imageUploadResults.imageType == 'iso')) {
+				if(imageUploadResults.imageId) {
+					// If we have an imageId, let's make sure Morpheus has a reference to this location
+					// (NOTE: The call to create below will not duplicate the location if it already exists)
+					VirtualImageLocation virtualImageLocation = new VirtualImageLocation([
+						virtualImage: new VirtualImageIdentityProjection(id: runConfig.virtualImage.id),
+						externalId  : imageUploadResults.imageId,
+						imageRegion : runConfig.regionCode,
+						imageFolder : runConfig.imageFolderName
+					])
+					morpheus.async.virtualImage.location.create([virtualImageLocation], cloud).blockingGet()
+				}
+				runConfig.imageRef = imageUploadResults.imageId
+
+				def runResults = insertVm(runConfig, provisionResponse, opts)
+
+				if(provisionResponse.success) {
+					finalizeVm(runConfig, provisionResponse, runResults)
+				}
+			} else {
+				provisionResponse.setError(imageUploadResults.message)
 			}
 		} catch(e) {
 			log.error("runVirtualMachine error:${e}", e)
@@ -1210,91 +1236,202 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		}
 	}
 
+	protected insertImage(Cloud cloud, WorkloadRequest workloadRequest, Map runConfig) {
+		log.debug "insertImage: ${cloud} ${runConfig}"
+		def taskResults = [success:false, imageId:runConfig.imageId, imageType: null]
+		def lock
+		VirtualImage virtualImage = runConfig.virtualImage
+		try {
+			log.debug("imageUploadId: ${runConfig.imageId}")
+
+			if(!virtualImage && runConfig.virtualImageId) {
+				try {
+					virtualImage = morpheus.async.virtualImage.get(runConfig.virtualImageId).blockingGet()
+				} catch(e) {
+					log.debug "Error in get image: ${e}"
+				}
+			}
+			if(runConfig.imageRef == null && virtualImage) {
+				lock = morpheus.acquireLock("olvm.imageupload.${virtualImage.id}".toString(), [timeout:IMAGE_TIMEOUT, ttl:IMAGE_TTL]).blockingGet()
+				log.debug "Uploading image ${virtualImage.id}"
+				morpheus.async.process.startProcessStep(workloadRequest.process, new ProcessEvent(type: ProcessEvent.ProcessType.provisionImage), 'uploading').blockingGet()
+
+				Collection<CloudFile> cloudFiles
+				try {
+					cloudFiles = morpheus.async.virtualImage.getVirtualImageFiles(virtualImage).blockingGet()
+					log.debug "cloudfiles: ${cloudFiles?.size()}"
+				} catch(e) {
+					log.debug "error getVirtualImageFiles: ${e}"
+				}
+				CloudFile qcowFile = OlvmComputeUtility.findQcowFile(cloudFiles)
+				def minDisk = virtualImage.minDisk ? virtualImage.minDisk.div(ComputeUtility.ONE_KILOBYTE) : DEFAULT_MIN_DISK
+				def minRam = virtualImage.minRam ?: DEFAULT_MIN_RAM
+				def containerImage = [
+					imageSrc     : qcowFile?.getURL(),
+					minDisk      : minDisk,
+					minRam       : minRam,
+					tags         : 'morpheus',
+					imageType    : ImageType.qcow2,
+					containerType: ImageType.qcow2,
+					imageFile    : qcowFile,
+					cloudFiles   : cloudFiles,
+					name         : virtualImage.name,
+					virtualImage : virtualImage
+				]
+				def imageConfig = [
+					hostId            : runConfig.hostId,
+					datastoreId       : runConfig.imageDatastoreId ?: runConfig.datastoreId,
+					storageDomainId	  : runConfig.rootVolume.datastore.externalId,
+					cloud             : cloud,
+					image             : containerImage,
+					resourcePool      : runConfig.resourcePoolId,
+					cluster           : runConfig.cluster,
+					clusterRef   	  : runConfig.clusterRef,
+					datacenter        : runConfig.datacenter,
+					datacenterRef	  : runConfig.datacenterRef,
+					networkId         : runConfig.networkId,
+					networkBackingType: runConfig.networkBackingType,
+					folder            : runConfig.imageFolderExtId,
+					connection  	  : runConfig.connection,
+					proxySettings     : workloadRequest.proxyConfiguration
+				]
+
+				def imageResults = OlvmComputeUtility.insertImage(imageConfig)
+				log.debug("insertContainerImage imageResults: ${imageResults}")
+				if(imageResults.success == true) {
+					taskResults.imageId = imageResults.data.imageRef
+					VirtualImageLocation virtualImageLocation = new VirtualImageLocation([
+						virtualImage: new VirtualImageIdentityProjection(id: runConfig.virtualImage.id),
+						externalId: taskResults.imageId,
+						imageRegion: runConfig.regionCode,
+						imageFolder: runConfig.imageFolderName
+					])
+					morpheus.async.virtualImage.location.create([virtualImageLocation], cloud).blockingGet()
+					taskResults.success = true
+				}
+			} else if(virtualImage?.imageType == ImageType.iso) {
+				log.debug "No upload required for ${virtualImage}... iso image"
+				taskResults.imageType = 'iso'
+				taskResults.success = true
+			} else {
+				log.debug "No upload required for ${virtualImage}"
+				taskResults.success = true
+				taskResults.imageId = runConfig.imageRef
+			}
+			log.debug("imageUploadTask: ${taskResults}")
+		}
+		catch(imageException) {
+			log.error("imageException: ${imageException}", imageException)
+			taskResults.message = 'Error uploading image'
+		}
+		finally {
+			if(lock) {
+				morpheus.releaseLock("olvm.imageupload.${virtualImage.id}".toString(), [lock:lock]).blockingGet()
+			}
+		}
+		return taskResults
+	}
+
 	protected insertVm(Map runConfig, ProvisionResponse provisionResponse, Map opts) {
 		log.debug("insertVm runConfig: {}", runConfig)
 		def taskResults = [success:false]
-		ComputeServer server = runConfig.server
-		Account account = server.account
-		opts.createUserList = runConfig.userConfig.createUsers
+		try {
+			ComputeServer server = runConfig.server
+			Account account = server.account
+			opts.createUserList = runConfig.userConfig.createUsers
 
-		//save server
-		runConfig.server = saveAndGet(server)
+			//save server
+			runConfig.server = saveAndGet(server)
 
-		//set install agent
-		runConfig.installAgent = runConfig.noAgent && server.cloud.agentMode != 'cloudInit'
+			//set install agent
+			runConfig.installAgent = runConfig.noAgent && server.cloud.agentMode != 'cloudInit'
 
-		//data volumes
-		if(runConfig.dataDisks)
-			runConfig.diskList = buildDataDiskList(runConfig.dataDisks)
-		def createResults = OlvmComputeUtility.createServer(runConfig)
-		log.debug("create server: ${createResults}")
-		if(createResults.success == true && createResults.data.vmId) {
-			server.externalId = createResults.data.vmId
-			provisionResponse.externalId = server.externalId
-			server = saveAndGet(server)
-			runConfig.server = server
+			//data volumes
+			if (runConfig.dataDisks)
+				runConfig.diskList = buildDataDiskList(runConfig.dataDisks)
+			def createResults = OlvmComputeUtility.createServer(runConfig)
+			log.debug("create server: ${createResults}")
+			if (createResults.success == true && createResults.data.vmId) {
+				server.externalId = createResults.data.vmId
+				provisionResponse.externalId = server.externalId
+				server = saveAndGet(server)
+				runConfig.server = server
 
-			OlvmComputeUtility.waitForServerExists([connection:runConfig.connection, server:server])
+				OlvmComputeUtility.waitForServerExists([connection: runConfig.connection, server: server])
 
-			// once server exists set entity ids onto our model
-			def vmDetails = OlvmComputeUtility.getServerDetail([connection:runConfig.connection, server:server])
+				// once server exists set entity ids onto our model
+				def vmDetails = OlvmComputeUtility.getServerDetail([connection: runConfig.connection, server: server])
 
-			// change size of the of the root volume and save off id
-			def rootVolume = server.volumes.find { it -> return it.rootVolume }
-			rootVolume.externalId = vmDetails.data.disks.find { d -> return d.bootable == true }.id
-			rootVolume = saveAndGetVolume(rootVolume)
-			OlvmComputeUtility.updateDiskSize([
-				connection:runConfig.connection, disk:[id:rootVolume.externalId, size:rootVolume.maxStorage]
-			])
-
-			// add data disks via cloud api, then save off disk ids
-			if (runConfig.dataDisks?.size() > 0) {
-				def dataDiskResp = OlvmComputeUtility.addDisksToVm([
-					connection: runConfig.connection, vmId: server.externalId,
-					disks     : runConfig.dataDisks
+				// change size of the of the root volume and save off id
+				def rootVolume = server.volumes.find { it -> return it.rootVolume }
+				rootVolume.externalId = vmDetails.data.disks.find { d -> return d.bootable == true }.id
+				rootVolume = saveAndGetVolume(rootVolume)
+				OlvmComputeUtility.updateDiskSize([
+					connection: runConfig.connection, disk: [id: rootVolume.externalId, size: rootVolume.maxStorage]
 				])
 
-				for (StorageVolume vol in runConfig.dataDisks) {
-					def cloudDisk = dataDiskResp.data.disks.find { it -> return it.name == vol.name }
-					vol.externalId = cloudDisk.externalId
-					saveAndGetVolume(vol)
+				// add data disks via cloud api, then save off disk ids
+				if (runConfig.dataDisks?.size() > 0) {
+					def dataDiskResp = OlvmComputeUtility.addDisksToVm([
+						connection: runConfig.connection, vmId: server.externalId,
+						disks     : runConfig.dataDisks
+					])
+
+					for (StorageVolume vol in runConfig.dataDisks) {
+						def cloudDisk = dataDiskResp.data.disks.find { it -> return it.name == vol.name }
+						vol.externalId = cloudDisk.externalId
+						saveAndGetVolume(vol)
+					}
 				}
-			}
 
-			// add extra interfaces to vm
-			if (runConfig.networkConfig.extraInterfaces) {
-				def addResp = OlvmComputeUtility.addNicsToVm([
-					connection:runConfig.connection, nics:runConfig.networkConfig.extraInterfaces, vmId:server.externalId
-				])
-
-				for (nic in addResp.data) {
-					saveAndGetNic(nic)
+				// add primary network interface if one does not exist on
+				if (!vmDetails.data.nics) {
+					def addPrimaryInterface = OlvmComputeUtility.addNicsToVm(
+						[connection: runConfig.connection, nics: [runConfig.networkConfig.primaryInterface], vmId: server.externalId]
+					)
+					//saveAndGetNic(addPrimaryInterface.data?.first())
 				}
-			}
 
-			// start vm for the first time
-			OlvmComputeUtility.startVmWithCloudInit([connection:runConfig.connection, server:server, cloudInitScript:runConfig.cloudConfig])
+				// add extra interfaces to vm
+				if (runConfig.networkConfig.extraInterfaces) {
+					def addResp = OlvmComputeUtility.addNicsToVm([
+						connection: runConfig.connection, nics: runConfig.networkConfig.extraInterfaces, vmId: server.externalId
+					])
 
-			// wait for ready
-			def statusResults = OlvmComputeUtility.checkServerReady(runConfig)
-			if(statusResults.success == true) {
-				//good to go
-				def serverDetails = statusResults.data
-				log.debug("server details: {}", serverDetails)
-				//update network info
-				def privateIp = serverDetails.ipV4?.first()
-				def publicIp = privateIp
+					for (nic in addResp.data) {
+						saveAndGetNic(nic)
+					}
+				}
 
-				taskResults.sshHost = publicIp
-				taskResults.server = serverDetails
-				taskResults.success = true
-			}
-			else {
-				taskResults.message = 'Failed to get server status'
+				// start vm for the first time
+				OlvmComputeUtility.startVmWithCloudInit([connection: runConfig.connection, server: server, cloudInitScript: runConfig.cloudConfig])
+
+				// wait for ready
+				def statusResults = OlvmComputeUtility.checkServerReady(runConfig)
+				if (statusResults.success == true) {
+					//good to go
+					def serverDetails = statusResults.data
+					log.debug("server details: {}", serverDetails)
+					//update network info
+					def privateIp = serverDetails.ipV4?.first()
+					def publicIp = privateIp
+
+					taskResults.sshHost = publicIp
+					taskResults.server = serverDetails
+					taskResults.success = true
+				} else {
+					taskResults.message = 'Failed to get server status'
+				}
+			} else {
+				taskResults.message = createResults.msg
 			}
 		}
-		else {
-			taskResults.message = createResults.msg
+		catch (Throwable t) {
+			log.error("Unable to insertVm(): ${t.message}", t)
+			taskResults.success = false
+			taskResults.error = "Unable to insertVm(): ${t.message}"
+			provisionResponse.success = false
+			provisionResponse.error = taskResults.error
 		}
 		return taskResults
 	}

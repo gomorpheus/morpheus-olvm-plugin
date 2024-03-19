@@ -3,8 +3,8 @@ resource "virtual-image" "olvm-image-morpheus-oel-7_9" {
 	code = "olvm.plugin.image.morpheus.oel.7.9.amd64"
 	category = "olvm.plugin.image.morpheus.oel"
 	name = "Morpheus Oracle Linux 7.9"
-	imageType = "ova"
-	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/oel/oel-7_9/OL7U9_x86_64-kvm-b212.qcow"
+	imageType = "qcow2"
+	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/oel/oel-7_9/morpheus-oracle-7-x86_64-20240304.qcow2"
 	imagePath = "olvm/oel/oel-7_9"
 	isCloudInit = true
 	systemImage = true
@@ -49,7 +49,7 @@ resource "workload-type-set" "olvm-oel-7_9-set" {
 
 resource "instance-type-layout" "olvm-oel-7_9-single" {
 	code = "olvm-oel-7.9-single"
-	name = "OLVM VM"
+	name = "Oracle Linux 7.9 VM"
 	sortOrder = 20
 	instanceVersion = "7.9"
 	description = "This will provision a single vm"

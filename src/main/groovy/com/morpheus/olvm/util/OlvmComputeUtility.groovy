@@ -5,6 +5,7 @@ import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.util.ComputeUtility
 import com.morpheusdata.core.util.HttpApiClient
 import com.morpheusdata.core.util.ProgressInputStream
+import com.morpheusdata.core.util.image.Qcow2InputStream
 import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.ComputeServerInterface
 import com.morpheusdata.response.ServiceResponse
@@ -212,13 +213,18 @@ class OlvmComputeUtility {
                 // grab domain service for the storage domain we wish to use
                 def storageDomainService = connection.systemService().storageDomainsService().storageDomainService(opts.storageDomainId)
 
+                // grab the inputstream of our qcow file and wrap in QcowInputStream to get the size of the disk we need
+                CloudFile cloudFile = opts.image.imageFile
+                Qcow2InputStream qcowInputStream = new Qcow2InputStream(cloudFile.inputStream, true)
+                def actualDiskSize = qcowInputStream.qcowHeader.size
+
                 // create a blank disk
                 def tmpDiskName = "morph_tmp_${opts.image.virtualImage.id}"
                 def blank = storageDomainService.disksService().add().disk(
                     disk()
                         .name(tmpDiskName)
                         .format(DiskFormat.COW)
-                        .provisionedSize(100 * ComputeUtility.ONE_GIGABYTE)
+                        .provisionedSize(actualDiskSize)
                         .storageDomain(
                             storageDomain()
                                 .id(opts.storageDomainId)
@@ -256,20 +262,19 @@ class OlvmComputeUtility {
 
                 // Now push the file contents of our qcow file to OLVM
                 def transferUrl = new URL(imageXfer.proxyUrl())
-                CloudFile cloudFile = opts.image.imageFile
+
 
                 // TODO: should we use a progress input stream here to update as we upload?
-                pushDataToTarget(cloudFile.inputStream, transferUrl, connection)
+                pushDataToTarget(qcowInputStream, transferUrl, connection)
 
                 xferService.finalize_().send()
 
                 // after we finalize the transfer wait for the image disk to be ok
                 def disksService = connection.systemService().disksService()
                 def diskService = disksService.diskService(blankDiskId)
-                def actualDiskSize
                 waitForSomeStuffToHappen([label: "Wait for disk ${blank.name()}"]) {
                     def d = diskService.get().send().disk()
-                    log.debug("Disk ${d.name()}(${d.id()}) statis is ${d.status()}")
+                    log.debug("Disk ${d.name()}(${d.id()}) status is ${d.status()}")
                     actualDiskSize = d.actualSize()
                     return d.status() == DiskStatus.OK
                 }
@@ -326,9 +331,6 @@ class OlvmComputeUtility {
                     return d.status() == DiskStatus.OK
                 }
 
-                // once vm is created, resize root volume
-                updateDiskSize([connection: connection, disk: [id: blankDiskId, size: actualDiskSize]])
-
                 // create template from this vm
                 def newTemplate = templatesService.add().template(
                     template()
@@ -364,7 +366,8 @@ class OlvmComputeUtility {
         return rtn
     }
 
-    static pushDataToTarget(InputStream inputStream, URL url, Connection con) {
+    static pushDataToTarget(Qcow2InputStream inputStream, URL url, Connection con) {
+    //static pushDataToTarget(InputStream inputStream, URL url, Connection con) {
         HttpURLConnection connection
         try {
             // Install the all-trusting trust manager
@@ -404,6 +407,9 @@ class OlvmComputeUtility {
             // Define a buffer for reading from the InputStream
             byte[] buffer = new byte[2048]
             int bytesRead
+
+            // first write all the bytes cached by the Qcow2InputStream that were read to generate the qcow header
+            outputStream.write(inputStream.qcowHeader.bytes)
 
             // Read from the InputStream and write to the OutputStream
             while ((bytesRead = inputStream.read(buffer)) != -1) {
@@ -1152,7 +1158,7 @@ class OlvmComputeUtility {
                 def filePath = file.name.toLowerCase();
                 def fileName = getLastPath(filePath)
 				//looking for non tmp file qcow files
-                if((fileName.endsWith('.qcow') == true || fileName.endsWith('qcow2') ) && fileName.startsWith('.') != true)
+                if((fileName.endsWith('.qcow') == true || fileName.endsWith('.qcow2') == true ) && fileName.startsWith('.') != true)
                     matchList << file
             }
             if(matchList.size() > 0)

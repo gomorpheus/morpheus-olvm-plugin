@@ -1,0 +1,83 @@
+// Debian 11
+resource "virtual-image" "olvm-image-morpheus-debian-11" {
+	code = "olvm.plugin.image.morpheus.debian.11.amd64"
+	category = "olvm.plugin.image.morpheus.debian"
+	name = "Morpheus Debian 11"
+	imageType = "qcow2"
+	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/debian/debian-11/morpheus-debian-11-amd64-20240304.qcow2"
+	imagePath = "olvm/debian/debian-11"
+	isCloudInit = true
+	systemImage = true
+	installAgent = true
+	osType {
+		code = "debian.64"
+	}
+	zoneType = "cloud.olvm.cloud"
+}
+
+resource "workload-type" "olvm-debian-11" {
+	code = "olvm-plugin-debian-11"
+	shortName = "debian"
+	name = "Debian 11"
+	ports = [22]
+	containerVersion = "11"
+	entryPoint = ""
+	mountLogs = "/var/log"
+	statTypeCode = "vm"
+	logTypeCode = "debian"
+	showServerLogs = true
+	category = "debian"
+	cloneType = "debian"
+	priorityOrder = 0
+	serverType = "vm"
+	providerType = "cloud.olvm.cloud"
+	containerPorts = [{code = "debian.22"}]
+	actions = [{code = "generic-remove-node"}]
+	checkTypeCode = "containerCheck"
+	virtualImage = virtual-image.olvm-image-morpheus-debian-11
+	provisionType = "cloud.olvm.provision"
+	backupType = "olvmSnapshot"
+}
+
+resource "workload-type-set" "olvm-debian-11-set" {
+	code = "olvm-debian-11-set"
+	containerType = workload-type.olvm-debian-11
+	priorityOrder = 0
+	dynamicCount = true
+	containerCount = 1
+}
+
+resource "instance-type-layout" "olvm-debian-11-single" {
+	code = "olvm-debian-11-single"
+	name = "Debian 11 VM"
+	sortOrder = 20
+	instanceVersion = "11"
+	description = "This will provision a single vm"
+	instanceType {
+		code = "debian"
+	}
+	serverCount = 1
+	hasAutoScale = true
+	portCount = 1
+	serverType = "vm"
+	enabled = true
+	creatable = true
+	supportsConvertToManaged = true
+	containers = [
+		workload-type-set.olvm-debian-11-set
+	]
+	actions = [{code = "generic-add-node"}]
+	provisionType = "cloud.olvm.provision"
+}
+
+resource "scale-action" "olvm-debian-11-single" {
+	code = "olvm-debian-11-single"
+	scaleType = "action"
+	layout = instance-type-layout.olvm-debian-11-single
+	upAction {
+		code = "generic-add-node"
+	}
+	downAction {
+		code = "generic-remove-node"
+	}
+}

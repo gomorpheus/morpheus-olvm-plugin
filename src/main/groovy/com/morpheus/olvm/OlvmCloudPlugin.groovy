@@ -29,7 +29,7 @@ class OlvmCloudPlugin extends Plugin {
 
     @Override
     void initialize() {
-        this.setName("OLVM Cloud Plugin")
+        this.setName("OLVM Cloud")
         this.registerProvider(new OlvmCloudProvider(this,this.morpheus))
         this.registerProvider(new OlvmProvisionProvider(this,this.morpheus))
         this.registerProvider(new OlvmOptionSourceProvider(this, this.morpheus))

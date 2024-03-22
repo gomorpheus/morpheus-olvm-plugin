@@ -49,7 +49,7 @@ class OlvmCloudProvider implements CloudProvider {
 	 */
 	@Override
 	String getDescription() {
-		return 'Describe me!'
+		return 'This plugin integrates Oracle Linux Virtualization Manager into the morpheus ecosystem'
 	}
 
 	/**

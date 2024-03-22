@@ -1035,7 +1035,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	 */
 	@Override
 	String getName() {
-		return 'OLVM Cloud Plugin Provisioning'
+		return 'OLVM'
 	}
 
 	/**

@@ -18,6 +18,7 @@ import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.ComputeCapacityInfo
 import com.morpheusdata.model.ComputeServer
 import com.morpheusdata.model.ComputeServerInterface
+import com.morpheusdata.model.ComputeTypeSet
 import com.morpheusdata.model.HostType
 import com.morpheusdata.model.Icon
 import com.morpheusdata.model.ImageType
@@ -32,6 +33,7 @@ import com.morpheusdata.model.StorageVolumeType
 import com.morpheusdata.model.VirtualImage
 import com.morpheusdata.model.VirtualImageLocation
 import com.morpheusdata.model.Workload
+import com.morpheusdata.model.WorkloadType
 import com.morpheusdata.model.projection.VirtualImageIdentityProjection
 import com.morpheusdata.model.provisioning.HostRequest
 import com.morpheusdata.model.provisioning.NetworkConfiguration
@@ -406,13 +408,98 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	}
 
 	@Override
-	ServiceResponse<PrepareHostResponse> prepareHost(ComputeServer computeServer, HostRequest hostRequest, Map map) {
-		return ServiceResponse.success()
+	ServiceResponse<PrepareHostResponse> prepareHost(ComputeServer server, HostRequest hostRequest, Map opts) {
+		log.debug "prepareHost: ${server} ${hostRequest} ${opts}"
+
+		Cloud cloud = server.cloud
+		ServiceResponse<PrepareHostResponse> resp = new ServiceResponse<>()
+		resp.data = new PrepareHostResponse(computeServer: server, disableCloudInit: false, options: [sendIp: false])
+
+		Connection connection = OlvmComputeUtility.getConnection(cloud)
+
+		try {
+			def layout = server?.layout
+			def typeSet = server.typeSet
+			def config = server.getConfigMap()
+			def imageType = config.templateTypeSelect ?: 'default'
+			VirtualImage virtualImage
+
+			if(layout && typeSet) {
+				Long computeTypeSetId = server.typeSet?.id
+				if(computeTypeSetId) {
+					ComputeTypeSet computeTypeSet = morpheus.services.computeTypeSet.get(computeTypeSetId)
+					WorkloadType workloadType = computeTypeSet.getWorkloadType()
+
+					if(workloadType) {
+						Long workloadTypeId = workloadType.Id
+						WorkloadType containerType = morpheus.services.containerType.get(workloadTypeId)
+						Long virtualImageId = containerType.virtualImage.id
+						virtualImage = morpheus.services.virtualImage.get(virtualImageId)
+						if(virtualImage) {
+							ensureVirtualImageLocation(connection, virtualImage, cloud)
+						}
+					}
+				}
+			} else if(imageType == 'custom') {
+				if (config.imageId) {
+					Long imageId = config.imageId?.toLong()
+					virtualImage = morpheus.services.virtualImage.get(imageId)
+					if(virtualImage) {
+						ensureVirtualImageLocation(connection, virtualImage, cloud)
+					}
+				}
+			} else {
+				virtualImage = morpheus.services.virtualImage.find(new DataQuery().withFilter("code", "olvm.plugin.image.morpheus.ubuntu.20.04.amd64"))
+				if(virtualImage) {
+					ensureVirtualImageLocation(connection, virtualImage, cloud)
+				}
+			}
+			if(!virtualImage) {
+				resp.msg = "No virtual image selected"
+			} else {
+				server.sourceImage = virtualImage
+				saveAndGet(server)
+				resp.success = true
+			}
+		} catch(e) {
+			resp.msg = "Error in prepareHost: ${e}"
+			log.error("${resp.msg}, ${e}", e)
+
+		}
+		finally {
+			connection?.close()
+		}
+		return resp
 	}
 
 	@Override
-	ServiceResponse<ProvisionResponse> runHost(ComputeServer computeServer, HostRequest hostRequest, Map map) {
-		return ServiceResponse.success()
+	ServiceResponse<ProvisionResponse> runHost(ComputeServer server, HostRequest hostRequest, Map opts) {
+		log.debug "runHost: ${server} ${hostRequest} ${opts}"
+		Connection connection
+		ProvisionResponse provisionResponse = new ProvisionResponse(success: true, installAgent: false)
+		try {
+			Cloud cloud = server.cloud
+			connection = OlvmComputeUtility.getConnection(cloud)
+			VirtualImage virtualImage = server.sourceImage
+
+			def runConfig = buildHostRunConfig(server, hostRequest, virtualImage, connection, opts)
+			runVirtualMachine(runConfig, provisionResponse, opts + [connection:connection])
+
+			if (provisionResponse.success != true) {
+				return new ServiceResponse(success: false, msg: provisionResponse.message ?: 'vm config error', error: provisionResponse.message, data: provisionResponse)
+			} else {
+				return new ServiceResponse<ProvisionResponse>(success: true, data: provisionResponse)
+			}
+
+		}
+		catch (e) {
+			log.error "runWorkload: ${e}", e
+			provisionResponse.setError(e.message)
+			return new ServiceResponse(success: false, msg: e.message, error: e.message, data: provisionResponse)
+		}
+		finally {
+			connection?.close()
+		}
 	}
 
 	@Override
@@ -1109,6 +1196,38 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			}
 		}
 		return rtn
+	}
+
+	protected buildHostRunConfig(ComputeServer server, HostRequest hostRequest, VirtualImage virtualImage, Connection connection, Map opts) {
+
+		Cloud cloud = server.cloud
+		StorageVolume rootVolume = server.volumes?.find{it.rootVolume == true}
+
+
+		def maxMemory = server.maxMemory?.div(ComputeUtility.ONE_MEGABYTE)
+		def maxStorage = rootVolume.getMaxStorage()
+
+		def serverConfig = server.getConfigMap()
+
+		def runConfig = [:] + opts + buildRunConfig(server, virtualImage, hostRequest.networkConfiguration, connection, serverConfig, opts)
+
+		runConfig += [
+			name              : server.name,
+			account 		  : server.account,
+			osDiskSize		  : maxStorage.div(ComputeUtility.ONE_GIGABYTE),
+			maxStorage        : maxStorage,
+			maxMemory		  : maxMemory,
+			applianceServerUrl: hostRequest.cloudConfigOpts?.applianceUrl,
+			timezone          : (server.getConfigProperty('timezone') ?: cloud.timezone),
+			proxySettings     : hostRequest.proxyConfiguration,
+			noAgent           : (opts.config?.containsKey("noAgent") == true && opts.config.noAgent == true),
+			installAgent      : (opts.config?.containsKey("noAgent") == false || (opts.config?.containsKey("noAgent") && opts.config.noAgent != true)),
+			userConfig		  : hostRequest.usersConfiguration,
+			cloudConfig		  : hostRequest.cloudConfigUser,
+			networkConfig	  : hostRequest.networkConfiguration
+		]
+
+		return runConfig
 	}
 
 	protected buildWorkloadRunConfig(Workload workload, WorkloadRequest workloadRequest, VirtualImage virtualImage, Connection connection, Map opts) {

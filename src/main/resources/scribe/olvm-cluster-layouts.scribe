@@ -1,0 +1,84 @@
+resource "compute-server-type" "olvm-linux" {
+  code = "olvm-linux"
+  name = "OLVM Docker Host"
+  description = ""
+  platform = "linux"
+  nodeType = "morpheus-node"
+  enabled = true
+  selectable = false
+  externalDelete = true
+  managed = true
+  controlPower = true
+  controlSuspend = false
+  creatable = false
+  computeService = "cloudPluginComputeService"
+  displayOrder =  0
+  hasAutomation = true
+  reconfigureSupported =  true
+  hasAgent = true
+  containerHypervisor = true
+  bareMetalHost = false
+  vmHypervisor = false
+  agentType = "node"
+  containerEngine = "docker"
+  viewSet = "docker"
+  containerMode = "docker"
+  isEmbedded =  true
+  provisionType = "olvm"
+  computeType = "docker-host"
+}
+
+resource "workload-type" "olvm-docker-ubuntu-20-04" {
+  code            = "olvm-docker-ubuntu-20-04"
+  shortName       = "ubuntu"
+  name            = "Docker Ubuntu 20.04"
+  ports           = [22]
+  containerVersion = "20.04"
+  repositoryImage = ""
+  imageCode       = "morpheus ubuntu 20.04"
+  entryPoint      = ""
+  mountLogs       = "/var/log"
+  statTypeCode    = "server"
+  logTypeCode     = "ubuntu"
+  showServerLogs  = "true"
+  category        = "ubuntu"
+  cloneType       = "ubuntu"
+  priorityOrder   = 0
+  serverType      = "vm"
+  providerType    = "olvm"
+  checkTypeCode   = "vmCheck"
+  virtualImage    = virtual-image.olvm-image-morpheus-ubuntu-20_04
+  containerPorts  = ["ubuntu.22"]
+  provisionType   = "olvm"
+}
+
+resource "compute-type-set" "olvm-docker-ubuntu-20-04-set" {
+  code                = "olvm-docker-ubuntu-20-04-set"
+  name                = "docker host"
+  workloadType       = workload-type.olvm-docker-ubuntu-20-04
+  computeServerType   = compute-server-type.olvm-linux
+  category            = "ubuntu"
+  priorityOrder       = 0
+  dynamicCount        = true
+  nodeCount           = 1
+  nodeType            = "worker"
+  canAddNodes         = true
+  installContainerRuntime = true
+  installStorageRuntime   = true
+}
+
+resource "compute-type-layout" "olvm-docker-ubuntu-20.04-single" {
+  code              = "olvm-docker-ubuntu-20-04-single"
+  name              = "OLVM Docker Host on Ubuntu 20.04"
+  sortOrder         = 5
+  enabled           = true
+  computeVersion    = "20.04"
+  description       = "This will provision a single docker host vm in OLVM"
+  type              = compute-server-type.olvm-linux
+  serverCount       = 1
+  memoryRequirement = 1024 * 1024 * 1024
+  hasAutoScale      = true
+  groupType         = "docker-cluster"
+  computeServers    = [ compute-type-set.olvm-docker-ubuntu-20-04-set ]
+  provisionType     = "olvm"
+}

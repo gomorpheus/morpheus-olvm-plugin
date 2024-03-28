@@ -91,10 +91,10 @@ jar {
 				'Morpheus-Organization': 'morpheus',
 				'Morpheus-Code': 'cloud.olvm',
 				'Morpheus-Description': 'TODO: Fill in the Plugin Description',
-				'Morpheus-Logo': 'assets/morpheus.svg',
-				'Morpheus-Logo-Dark': 'assets/morpheus.svg',
+				'Morpheus-Logo': 'assets/OLVM-140.svg',
+				'Morpheus-Logo-Dark': 'assets/OLVM-140.svg',
 				'Morpheus-Labels': 'Plugin',
-				'Morpheus-Repo': 'https://github.com/gomorpheus/example',
+				'Morpheus-Repo': 'https://github.com/gomorpheus/morpheus-olvm-plugin',
 				'Morpheus-Min-Appliance-Version': "7.0.0"
 		)
 	}

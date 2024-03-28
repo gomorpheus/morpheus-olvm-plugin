@@ -23,7 +23,6 @@ import com.morpheusdata.model.HostType
 import com.morpheusdata.model.Icon
 import com.morpheusdata.model.ImageType
 import com.morpheusdata.model.Instance
-import com.morpheusdata.model.NetAddress
 import com.morpheusdata.model.Network
 import com.morpheusdata.model.OptionType
 import com.morpheusdata.model.ProcessEvent
@@ -135,8 +134,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	 */
 	@Override
 	Icon getCircularIcon() {
-		// TODO: change icon paths to correct filenames once added to your project
-		return new Icon(path:'provision-circular.svg', darkPath:'provision-circular-dark.svg')
+		return new Icon(path:'olvm-symbolonly.svg', darkPath:'olvm-symbolonly.svg')
 	}
 
 	/**

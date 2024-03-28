@@ -59,8 +59,7 @@ class OlvmCloudProvider implements CloudProvider {
 	 */
 	@Override
 	Icon getIcon() {
-		// TODO: change icon paths to correct filenames once added to your project
-		return new Icon(path:'cloud.svg', darkPath:'cloud-dark.svg')
+		return new Icon(path:'OLVM-140.svg', darkPath:'OLVM-140.svg')
 	}
 
 	/**
@@ -70,8 +69,7 @@ class OlvmCloudProvider implements CloudProvider {
 	 */
 	@Override
 	Icon getCircularIcon() {
-		// TODO: change icon paths to correct filenames once added to your project
-		return new Icon(path:'cloud-circular.svg', darkPath:'cloud-circular-dark.svg')
+		return new Icon(path:'olvm-symbolonly.svg', darkPath:'olvm-symbolonly.svg')
 	}
 
 	/**

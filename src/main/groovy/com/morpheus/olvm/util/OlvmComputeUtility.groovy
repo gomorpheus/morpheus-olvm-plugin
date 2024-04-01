@@ -3,8 +3,6 @@ package com.morpheus.olvm.util
 import com.bertramlabs.plugins.karman.CloudFile
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.util.ComputeUtility
-import com.morpheusdata.core.util.HttpApiClient
-import com.morpheusdata.core.util.ProgressInputStream
 import com.morpheusdata.core.util.image.Qcow2InputStream
 import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.ComputeServerInterface
@@ -669,8 +667,10 @@ class OlvmComputeUtility {
                     name:vm.name(),
                     hostname:vm.fqdn(),
                     id:vm.id(),
+                    clusterId:vm.cluster()?.id(),
                     memory:vm.memory(),
                     cores:vm.cpu().topology().cores() * vm.cpu().topology().sockets(),
+                    sockets:vm.cpu().topology().sockets(),
                     ipV4:[],
                     ipV6:[],
                     status:vm.status().toString(),
@@ -1276,6 +1276,37 @@ class OlvmComputeUtility {
                 .cores(opts.maxCores.toInteger())
                 .sockets(opts.coresPerSocket?.toInteger() ?: 1)
         )
+    }
+
+    static getOsTypeCode(String olvmCode) {
+        def code = 'unknown'
+        switch (olvmCode) {
+            case 'rhel':
+                code = 'redhat.64'
+                break
+            case 'ol':
+                code = 'oracle.linux.64'
+                break
+            case 'windows':
+                code = olvmCode
+                break
+            case 'centos':
+                code = 'cent.64'
+                break
+            case 'ubuntu':
+                code = 'ubuntu.64'
+                break
+            case 'debian':
+                code = 'debian.64'
+                break
+            case 'fedora':
+                code = 'fedora.64'
+                break
+            case 'sles':
+                code = 'suse.64'
+                break
+        }
+        return code
     }
 
     static getConnection(Cloud cloud) {

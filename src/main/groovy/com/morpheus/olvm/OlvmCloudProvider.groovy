@@ -250,6 +250,7 @@ class OlvmCloudProvider implements CloudProvider {
 			name:'OLVM Instance',
 			code:'olvmUnmanaged',
 			description:'An unmanaged OLVM vm',
+			managed:false,
 			reconfigureSupported:false,
 			hasAutomation:false,
 			supportsConsoleKeymap:false,

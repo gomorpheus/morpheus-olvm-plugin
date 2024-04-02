@@ -118,20 +118,21 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
         }
 
         // load existing credentials when not passed in
-        if(args.credential == null && !(args.zone?.serviceUsername ?: args.config?.serviceUsername)) {
+        def cloud = args.zone ?: args.domain ?: args.config
+        if(args.credential == null && !cloud.serviceUsername) {
             // check for passed in credentials
-            if(!rtn.accountCredentialLoaded) {
+            if(!rtn.accountCredentialLoaded || !rtn.accountCredentialData) {
                 AccountCredential credentials = morpheusContext.services.accountCredential.loadCredentials(rtn)
                 rtn.accountCredentialData = credentials?.data
             }
         } else {
             def config = [
-                username: args.zone?.serviceUsername ?: args.config?.serviceUsername,
-                password: args.zone?.servicePassword ?: args.config?.servicePassword
+                username: cloud.serviceUsername,
+                password: cloud.servicePassword
             ]
             rtn.setConfigMap(rtn.getConfigMap() + config)
             rtn.accountCredentialData = morpheusContext.services.accountCredential.loadCredentialConfig(args.credential, config).data
-            rtn.serviceUrl = args.zone?.serviceUrl
+            rtn.serviceUrl = cloud.serviceUrl
         }
         rtn.accountCredentialLoaded = true
 

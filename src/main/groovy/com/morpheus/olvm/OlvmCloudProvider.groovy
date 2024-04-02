@@ -501,7 +501,8 @@ class OlvmCloudProvider implements CloudProvider {
 	 */
 	@Override
 	ServiceResponse startServer(ComputeServer computeServer) {
-		return ServiceResponse.success()
+		def result = OlvmComputeUtility.startVm([cloud:computeServer.cloud, vmId:computeServer.externalId])
+		return new ServiceResponse(result.success, result.msg, null, null)
 	}
 
 	/**
@@ -512,7 +513,7 @@ class OlvmCloudProvider implements CloudProvider {
 	 */
 	@Override
 	ServiceResponse stopServer(ComputeServer computeServer) {
-		return ServiceResponse.success()
+		def result = OlvmComputeUtility.startVm([cloud:computeServer.cloud, vmId:computeServer.externalId])
 	}
 
 	/**

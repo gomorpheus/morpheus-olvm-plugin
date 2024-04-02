@@ -537,6 +537,10 @@ class OlvmComputeUtility {
         Connection connection = opts.connection
         def closeConnection = false
         try {
+            if (!connection) {
+                connection = getConnection(opts.cloud)
+                closeConnection = true
+            }
             def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
             vmService.start().send()
 
@@ -557,6 +561,10 @@ class OlvmComputeUtility {
         Connection connection = opts.connection
         def closeConnection = false
         try {
+            if (!connection) {
+                connection = OlvmComputeUtility.getConnection(opts.cloud)
+                closeConnection = true
+            }
             def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
             vmService.stop().send()
 

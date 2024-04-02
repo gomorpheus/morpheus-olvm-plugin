@@ -954,7 +954,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	 */
 	@Override
 	ServiceResponse stopWorkload(Workload workload) {
-		return ServiceResponse.success()
+		return stopServer(workload.server)
 	}
 
 	/**
@@ -964,7 +964,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	 */
 	@Override
 	ServiceResponse startWorkload(Workload workload) {
-		return ServiceResponse.success()
+		return startServer(workload.server)
 	}
 
 	/**

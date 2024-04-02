@@ -582,6 +582,6 @@ class OlvmCloudProvider implements CloudProvider {
 	 */
 	@Override
 	String getName() {
-		return 'OLVM Cloud Plugin'
+		return 'OLVM'
 	}
 }

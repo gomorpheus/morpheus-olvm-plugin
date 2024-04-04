@@ -286,8 +286,6 @@ class OlvmCloudProvider implements CloudProvider {
 		return serverTypes
 	}
 
-
-
 	/**
 	 * Validates the submitted cloud information to make sure it is functioning correctly.
 	 * If a {@link ServiceResponse} is not marked as successful then the validation results will be
@@ -514,6 +512,7 @@ class OlvmCloudProvider implements CloudProvider {
 	@Override
 	ServiceResponse stopServer(ComputeServer computeServer) {
 		def result = OlvmComputeUtility.startVm([cloud:computeServer.cloud, vmId:computeServer.externalId])
+		return new ServiceResponse(result.success, result.msg, null, null)
 	}
 
 	/**
@@ -523,7 +522,7 @@ class OlvmCloudProvider implements CloudProvider {
 	 */
 	@Override
 	ServiceResponse deleteServer(ComputeServer computeServer) {
-		return ServiceResponse.success()
+		return getProvisionProvider(getDefaultProvisionTypeCode()).deleteServer(computeServer)
 	}
 
 	/**

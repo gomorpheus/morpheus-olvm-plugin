@@ -9,6 +9,7 @@ import com.morpheusdata.core.data.DataFilter
 import com.morpheusdata.core.data.DataQuery
 import com.morpheusdata.model.AccountCredential
 import com.morpheusdata.model.Cloud
+import com.morpheusdata.model.ComputeServer
 import com.morpheusdata.model.projection.CloudPoolIdentity
 import groovy.util.logging.Slf4j
 import io.reactivex.rxjava3.core.Observable
@@ -113,12 +114,12 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
         args = args instanceof Object[] ? args.getAt(0) : args
         Long cloudId = getCloudId(args)
         Cloud rtn = cloudId ? morpheusContext.async.cloud.getCloudById(cloudId).blockingGet() : null
+        def cloud = rtn
         if(!rtn) {
             rtn = new Cloud()
+            cloud = args.config
         }
 
-        // load existing credentials when not passed in
-        def cloud = args.zone ?: args.domain ?: args.config
         if(args.credential == null && !cloud.serviceUsername) {
             // check for passed in credentials
             if(!rtn.accountCredentialLoaded || !rtn.accountCredentialData) {

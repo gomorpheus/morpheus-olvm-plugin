@@ -181,6 +181,32 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	@Override
 	Collection<OptionType> getNodeOptionTypes() {
 		Collection<OptionType> nodeOptions = []
+		nodeOptions << new OptionType([
+			name:'datacenter',
+			code:'olvm.plugin.provision.node.datacenter',
+			category:'provisionType.node.olvm',
+			fieldName:'datacenterId',
+			fieldContext:'config',
+			fieldLabel:'Datacenter',
+			required:true,
+			noBlank:true,
+			inputType:OptionType.InputType.SELECT,
+			displayOrder:100,
+			optionSource:'olvmDatacenters'
+		])
+		nodeOptions << new OptionType([
+			name:'cluster',
+			code:'olvm.plugin.provision.node.cluster',
+			category:'provisionType.node.olvm',
+			fieldName:'clusterId',
+			fieldContext:'config',
+			fieldLabel:'Cluster',
+			required:true,
+			noBlank:true,
+			inputType:OptionType.InputType.SELECT,
+			displayOrder:110,
+			optionSource:'olvmClusters'
+		])
 		return nodeOptions
 	}
 
@@ -401,11 +427,6 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	}
 
 	@Override
-	ServiceResponse<ProvisionResponse> waitForHost(ComputeServer server) {
-		return super.waitForHost(server)
-	}
-
-	@Override
 	ServiceResponse<PrepareHostResponse> prepareHost(ComputeServer server, HostRequest hostRequest, Map opts) {
 		log.debug "prepareHost: ${server} ${hostRequest} ${opts}"
 
@@ -481,7 +502,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			VirtualImage virtualImage = server.sourceImage
 
 			def runConfig = buildHostRunConfig(server, hostRequest, virtualImage, connection, opts)
-			runVirtualMachine(runConfig, provisionResponse, opts + [connection:connection])
+			runVirtualMachine(cloud, hostRequest, runConfig, provisionResponse, opts + [connection:connection])
 
 			if (provisionResponse.success != true) {
 				return new ServiceResponse(success: false, msg: provisionResponse.message ?: 'vm config error', error: provisionResponse.message, data: provisionResponse)
@@ -501,8 +522,49 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	}
 
 	@Override
-	ServiceResponse finalizeHost(ComputeServer computeServer) {
-		return ServiceResponse.success()
+	ServiceResponse<ProvisionResponse> waitForHost(ComputeServer server) {
+		log.debug("waitForHost: ${server}")
+		try {
+			return getServerDetails(server)
+		} catch(e) {
+			log.error("Error waitForHost: ${e}", e)
+			return new ServiceResponse(success: false, msg: "Error in waiting for Host: ${e}")
+		}
+	}
+
+	@Override
+	ServiceResponse finalizeHost(ComputeServer server) {
+		ServiceResponse rtn = ServiceResponse.prepare()
+		log.debug("finalizeHost: ${server?.id}")
+		try {
+			def serverDetails = getServerDetails(server)
+
+			// update IP address if necessary
+			if(serverDetails.success == true && serverDetails.data.publicIp) {
+				def doSave = false
+				def privateIp = serverDetails.data.privateIp
+				def publicIp = serverDetails.data.publicIp
+				if(server.internalIp != privateIp) {
+					server.internalIp = privateIp
+					doSave = true
+				}
+				if(serverDetails.data.externalIp != publicIp) {
+					server.externalIp = publicIp
+					doSave = true
+				}
+
+				if(doSave) {
+					morpheus.async.computeServer.bulkSave([server]).blockingGet()
+				}
+				rtn.success = true
+			}
+		} catch(e) {
+			rtn.success = false
+			rtn.msg = "Error in finalizing server: ${e.message}"
+			log.error("Error in finalizeWorkload: {}", e, e)
+		}
+
+		return rtn
 	}
 
 	/**
@@ -920,7 +982,8 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 				server.status = 'provisioned'
 				server.statusDate = new Date()
 				server.serverType = 'vm'
-				server.osDevice = '/dev/sda'
+				server.osDevice = '/dev/vda'
+				server.dataDevice = server.volumes?.size() > 1 ? '/dev/vdb' : '/dev/vda'
 				server.lvmEnabled = server.volumes?.size() > 1
 				server.managed = true
 				if(runResults.newPassword)
@@ -1202,7 +1265,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		StorageVolume rootVolume = server.volumes?.find{it.rootVolume == true}
 
 
-		def maxMemory = server.maxMemory?.div(ComputeUtility.ONE_MEGABYTE)
+		def maxMemory = server.maxMemory
 		def maxStorage = rootVolume.getMaxStorage()
 
 		def serverConfig = server.getConfigMap()
@@ -1212,7 +1275,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		runConfig += [
 			name              : server.name,
 			account 		  : server.account,
-			osDiskSize		  : maxStorage.div(ComputeUtility.ONE_GIGABYTE),
+			osDiskSize		  : maxStorage,
 			maxStorage        : maxStorage,
 			maxMemory		  : maxMemory,
 			applianceServerUrl: hostRequest.cloudConfigOpts?.applianceUrl,
@@ -1222,7 +1285,8 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			installAgent      : (opts.config?.containsKey("noAgent") == false || (opts.config?.containsKey("noAgent") && opts.config.noAgent != true)),
 			userConfig		  : hostRequest.usersConfiguration,
 			cloudConfig		  : hostRequest.cloudConfigUser,
-			networkConfig	  : hostRequest.networkConfiguration
+			networkConfig	  : hostRequest.networkConfiguration,
+			workloadConfig    : serverConfig
 		]
 
 		return runConfig
@@ -1249,7 +1313,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			maxStorage        : maxStorage,
 			maxMemory		  : maxMemory,
 			applianceServerUrl: workloadRequest.cloudConfigOpts?.applianceUrl,
-			workloadConfig    : workload.getConfigMap(),
+			workloadConfig    : workloadConfig,
 			timezone          : (server.getConfigProperty('timezone') ?: cloud.timezone),
 			proxySettings     : workloadRequest.proxyConfiguration,
 			noAgent           : (opts.config?.containsKey("noAgent") == true && opts.config.noAgent == true),
@@ -1280,8 +1344,8 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 
 		// get data center and cluster information
 		def zonePoolService = morpheus.async.cloud.pool
-		def datacenter = zonePoolService.get(config.datacenterId).blockingGet()
-		def cluster = zonePoolService.get(config.clusterId).blockingGet()
+		def datacenter = zonePoolService.get(config.datacenterId.toLong()).blockingGet()
+		def cluster = zonePoolService.get(config.clusterId.toLong()).blockingGet()
 
 		def runConfig = [
 			serverId:server.id,
@@ -1300,7 +1364,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			platform:(virtualImage.osType?.platform == 'windows' ? 'windows' : 'linux') ?: virtualImage.platform,
 			osDiskSize:maxStorage.div(ComputeUtility.ONE_GIGABYTE),
 			maxStorage:maxStorage,
-			osDiskName:'/dev/sda1',
+			osDiskName:'/dev/vda1',
 			dataDisks:dataDisks,
 			rootVolume:rootVolume,
 			virtualImage:virtualImage,
@@ -1321,7 +1385,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		return runConfig
 	}
 
-	protected void runVirtualMachine(Cloud cloud, WorkloadRequest workloadRequest, Map runConfig, ProvisionResponse provisionResponse, Map opts) {
+	protected void runVirtualMachine(Cloud cloud, Object workloadRequest, Map runConfig, ProvisionResponse provisionResponse, Map opts) {
 		try {
 			def imageUploadResults = insertImage(cloud, workloadRequest, runConfig)
 			log.info("imageUploadResults: ${imageUploadResults}")
@@ -1353,7 +1417,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		}
 	}
 
-	protected insertImage(Cloud cloud, WorkloadRequest workloadRequest, Map runConfig) {
+	protected insertImage(Cloud cloud, Object workloadRequest, Map runConfig) {
 		log.debug "insertImage: ${cloud} ${runConfig}"
 		def taskResults = [success:false, imageId:runConfig.imageId, imageType: null]
 		def lock
@@ -1425,6 +1489,9 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 					])
 					morpheus.async.virtualImage.location.create([virtualImageLocation], cloud).blockingGet()
 					taskResults.success = true
+
+					// end process step
+					morpheus.async.process.endProcessStep(workloadRequest.process, 'complete', 'complete').blockingGet()
 				}
 			} else if(virtualImage?.imageType == ImageType.iso) {
 				log.debug "No upload required for ${virtualImage}... iso image"
@@ -1474,7 +1541,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 				server = saveAndGet(server)
 				runConfig.server = server
 
-				OlvmComputeUtility.waitForServerExists([connection: runConfig.connection, server: server])
+				OlvmComputeUtility.waitForServerExists([connection:runConfig.connection, server:server])
 
 				// once server exists set entity ids onto our model
 				def vmDetails = OlvmComputeUtility.getServerDetail([connection: runConfig.connection, server: server])
@@ -1536,6 +1603,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 					taskResults.sshHost = publicIp
 					taskResults.server = serverDetails
 					taskResults.success = true
+					provisionResponse.success = true
 				} else {
 					taskResults.message = 'Failed to get server status'
 				}

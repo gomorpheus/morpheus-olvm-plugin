@@ -2,12 +2,15 @@ package com.morpheus.olvm.util
 
 import com.bertramlabs.plugins.karman.CloudFile
 import com.morpheusdata.core.MorpheusContext
-import com.morpheusdata.core.util.ComputeUtility
 import com.morpheusdata.core.util.image.Qcow2InputStream
 import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.ComputeServerInterface
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
+import org.apache.http.HttpHost
+import org.apache.http.impl.client.CloseableHttpClient
+import org.apache.http.impl.client.HttpClients
+import org.apache.http.impl.conn.DefaultProxyRoutePlanner
 import org.ovirt.engine.sdk4.Connection
 import org.ovirt.engine.sdk4.builders.CpuBuilder
 import org.ovirt.engine.sdk4.builders.NicBuilder
@@ -33,7 +36,6 @@ import java.security.cert.X509Certificate
 
 import static org.ovirt.engine.sdk4.ConnectionBuilder.connection
 import static org.ovirt.engine.sdk4.builders.Builders.cluster
-import static org.ovirt.engine.sdk4.builders.Builders.core
 import static org.ovirt.engine.sdk4.builders.Builders.cpu
 import static org.ovirt.engine.sdk4.builders.Builders.cpuTopology
 import static org.ovirt.engine.sdk4.builders.Builders.disk
@@ -51,6 +53,7 @@ import static org.ovirt.engine.sdk4.builders.Builders.vnicProfile
 @Slf4j
 class OlvmComputeUtility {
     public static final Long DEFAULT_WAIT_TIMEOUT = 30l * 60l // 30 minute default
+    private static Boolean proxySelectorConfigured = false
 
     static listDatacenters(opts) {
         ServiceResponse rtn = ServiceResponse.prepare()
@@ -562,7 +565,7 @@ class OlvmComputeUtility {
         def closeConnection = false
         try {
             if (!connection) {
-                connection = OlvmComputeUtility.getConnection(opts.cloud)
+                connection = getConnection(opts.cloud)
                 closeConnection = true
             }
             def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
@@ -1322,24 +1325,74 @@ class OlvmComputeUtility {
             // TOOD: load credential data
         }
 
-        return getConnection([
+        def config = [
             endpointUrl:cloud.serviceUrl,
             serviceUsername:cloud.accountCredentialData?.username ?: cloud.serviceUsername,
             servicePassword:cloud.accountCredentialData?.password ?: cloud.servicePassword
-        ])
+        ]
+
+        if (cloud.apiProxy) {
+            config.apiProxy = cloud.apiProxy
+        }
+
+        return getConnection(config)
     }
 
     static Connection getConnection(Map details) {
-        return connection()
+        if (details.apiProxy && !proxySelectorConfigured) {
+            enableProxy(details.endpointUrl, details.apiProxy.proxyHost, details.apiProxy.proxyPort)
+        }
+        else if (!details.apiProxy && proxySelectorConfigured) {
+            disableProxy()
+        }
+
+        def connectionBuilder = connection()
             .url(details.endpointUrl)
             .user(details.serviceUsername)
             .password(details.servicePassword)
             .insecure(true)
-            .build()
+
+        return connectionBuilder.build()
     }
 
     static getDeviceName(Integer index) {
         return "/dev/vd${BLOCK_DEVICE_LIST[index]}".toString()
+    }
+
+    private static enableProxy(String endpoint, String proxyHost, Integer proxyPort) {
+        Proxy httpProxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort))
+        URI proxyUri = new URI(endpoint)
+        ProxySelector.setDefault(new ProxySelector() {
+            @Override
+            List<Proxy> select(URI uri) {
+                def proxyList
+                if (uri.host == proxyUri.host)
+                    proxyList = Collections.singletonList(httpProxy)
+                return proxyList ?: []
+            }
+
+            @Override
+            void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
+                log.error("Unable to connect to ${uri.toString()} via proxy ${sa.toString()}")
+            }
+        })
+        proxySelectorConfigured = true
+    }
+
+    private static disableProxy() {
+        List<Proxy> empty = new ArrayList<Proxy>()
+        ProxySelector.setDefault(new ProxySelector() {
+            @Override
+            List<Proxy> select(URI uri) {
+                return empty
+            }
+
+            @Override
+            void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
+                log.info("Should never happen with proxy disabled")
+            }
+        })
+        proxySelectorConfigured = false
     }
 
     public static final List BLOCK_DEVICE_LIST = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l']

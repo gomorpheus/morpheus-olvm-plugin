@@ -1,0 +1,27 @@
+resource "option-type" "olvm-datacenter" {
+  name = "datacenter"
+  code = "olvm.plugin.provision.datacenter"
+  category:"provisionType.olvm",
+  fieldName = "datacenterId"
+  fieldContext = "config"
+  fieldLabel = "Datacenter"
+  type = "select"
+  displayOrder = 100
+  required = true
+  noBlack = true
+  optionSource = "olvmDatacenters"
+}
+
+resource "option-type" "olvm-cluster" {
+  name = "cluster"
+  code = "olvm.plugin.provision.cluster"
+  category:"provisionType.olvm",
+  fieldName = "clusterId"
+  fieldContext = "config"
+  fieldLabel = "Cluster"
+  type = "select"
+  displayOrder = 110
+  required = true
+  noBlack = true
+  optionSource = "olvmClusters"
+}

@@ -32,7 +32,7 @@ import groovy.util.logging.Slf4j
 
 @Slf4j
 class OlvmCloudProvider implements CloudProvider {
-	public static final String CLOUD_PROVIDER_CODE = 'cloud.olvm.cloud'
+	public static final String CLOUD_PROVIDER_CODE = 'olvm'
 
 	protected MorpheusContext context
 	protected Plugin plugin

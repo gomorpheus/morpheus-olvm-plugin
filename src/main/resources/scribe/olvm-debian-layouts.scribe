@@ -12,7 +12,7 @@ resource "virtual-image" "olvm-image-morpheus-debian-11" {
 	osType {
 		code = "debian.64"
 	}
-	zoneType = "cloud.olvm.cloud"
+	zoneType = "olvm"
 }
 
 resource "workload-type" "olvm-debian-11" {
@@ -30,12 +30,12 @@ resource "workload-type" "olvm-debian-11" {
 	cloneType = "debian"
 	priorityOrder = 0
 	serverType = "vm"
-	providerType = "cloud.olvm.cloud"
+	providerType = "olvm"
 	containerPorts = [{code = "debian.22"}]
 	actions = [{code = "generic-remove-node"}]
 	checkTypeCode = "containerCheck"
 	virtualImage = virtual-image.olvm-image-morpheus-debian-11
-	provisionType = "cloud.olvm.provision"
+	provisionType = "olvm-provision-standard"
 	backupType = "olvmSnapshot"
 }
 
@@ -67,7 +67,7 @@ resource "instance-type-layout" "olvm-debian-11-single" {
 		workload-type-set.olvm-debian-11-set
 	]
 	actions = [{code = "generic-add-node"}]
-	provisionType = "cloud.olvm.provision"
+	provisionType = "olvm-provision-standard"
 }
 
 resource "scale-action" "olvm-debian-11-single" {

@@ -48,7 +48,7 @@ import org.ovirt.engine.sdk4.types.VmStatus
 
 @Slf4j
 class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvisionProvider, WorkloadProvisionProvider, WorkloadProvisionProvider.ResizeFacet {
-	public static final String PROVISION_PROVIDER_CODE = 'cloud.olvm.provision'
+	public static final String PROVISION_PROVIDER_CODE = 'olvm-provision-standard'
 	protected static final IMAGE_TIMEOUT = 60l * 60l * 1000l // one hour
 	protected static final IMAGE_TTL = 60l * 60l * 1000l // one hour
 	protected static final DEFAULT_MIN_DISK = 5

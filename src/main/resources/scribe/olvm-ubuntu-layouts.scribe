@@ -12,7 +12,7 @@ resource "virtual-image" "olvm-image-morpheus-ubuntu-20_04" {
 	osType {
 		code = "ubuntu.20.04.64"
 	}
-	zoneType = "cloud.olvm.cloud"
+	zoneType = "olvm"
 }
 
 resource "workload-type" "olvm-ubuntu-20_04" {
@@ -30,12 +30,12 @@ resource "workload-type" "olvm-ubuntu-20_04" {
 	cloneType = "ubuntu"
 	priorityOrder = 0
 	serverType = "vm"
-	providerType = "cloud.olvm.cloud"
+	providerType = "olvm"
 	containerPorts = [{code = "ubuntu.22"}]
 	actions = [{code = "ubuntu-remove-node"}]
 	checkTypeCode = "containerCheck"
 	virtualImage = virtual-image.olvm-image-morpheus-ubuntu-20_04
-	provisionType = "cloud.olvm.provision"
+	provisionType = "olvm-provision-standard"
 	backupType = "olvmSnapshot"
 }
 
@@ -67,7 +67,7 @@ resource "instance-type-layout" "olvm-ubuntu-20_04-single" {
 		workload-type-set.olvm-ubuntu-20_04-set
 	]
 	actions = [{code = "ubuntu-add-node"}]
-	provisionType = "cloud.olvm.provision"
+	provisionType = "olvm-provision-standard"
 }
 
 resource "scale-action" "olvm-ubuntu-20_04-single" {
@@ -96,7 +96,7 @@ resource "virtual-image" "olvm-image-morpheus-ubuntu-18_04" {
 	osType {
 		code = "ubuntu.18.04.64"
 	}
-	zoneType = "cloud.olvm.cloud"
+	zoneType = "olvm"
 }
 
 resource "workload-type" "olvm-ubuntu-18_04" {
@@ -114,12 +114,12 @@ resource "workload-type" "olvm-ubuntu-18_04" {
 	cloneType = "ubuntu"
 	priorityOrder = 0
 	serverType = "vm"
-	providerType = "cloud.olvm.cloud"
+	providerType = "olvm"
 	containerPorts = [{code = "ubuntu.22"}]
 	actions = [{code = "ubuntu-remove-node"}]
 	checkTypeCode = "containerCheck"
 	virtualImage = virtual-image.olvm-image-morpheus-ubuntu-18_04
-	provisionType = "cloud.olvm.provision"
+	provisionType = "olvm-provision-standard"
 	backupType = "olvmSnapshot"
 }
 
@@ -151,7 +151,7 @@ resource "instance-type-layout" "olvm-ubuntu-18_04-single" {
 		workload-type-set.olvm-ubuntu-18_04-set
 	]
 	actions = [{code = "ubuntu-add-node"}]
-	provisionType = "cloud.olvm.provision"
+	provisionType = "olvm-provision-standard"
 }
 
 resource "scale-action" "olvm-ubuntu-18_04-single" {

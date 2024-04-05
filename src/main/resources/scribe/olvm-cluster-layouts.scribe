@@ -24,7 +24,7 @@ resource "compute-server-type" "olvm-linux" {
   viewSet = "docker"
   containerMode = "docker"
   isEmbedded =  true
-  provisionType = "cloud.olvm.provision"
+  provisionType = "olvm-provision-standard"
   computeType = "docker-host"
   optionTypes = [
     option-type.olvm-datacenter,
@@ -49,11 +49,11 @@ resource "workload-type" "olvm-docker-ubuntu-20-04" {
   cloneType       = "ubuntu"
   priorityOrder   = 0
   serverType      = "vm"
-  providerType    = "cloud.olvm.provision"
+  providerType    = "olvm"
   checkTypeCode   = "vmCheck"
   virtualImage    = virtual-image.olvm-image-morpheus-ubuntu-20_04
   containerPorts  = ["ubuntu.22"]
-  provisionType   = "cloud.olvm.provision"
+  provisionType   = "olvm-provision-standard"
 }
 
 resource "compute-type-set" "olvm-docker-ubuntu-20-04-set" {
@@ -84,5 +84,5 @@ resource "compute-type-layout" "olvm-docker-ubuntu-20.04-single" {
   hasAutoScale      = true
   groupType         = "docker-cluster"
   computeServers    = [ compute-type-set.olvm-docker-ubuntu-20-04-set ]
-  provisionType     = "cloud.olvm.provision"
+  provisionType     = "olvm-provision-standard"
 }

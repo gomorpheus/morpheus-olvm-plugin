@@ -117,7 +117,7 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
         def cloud = rtn
         if(!rtn) {
             rtn = new Cloud()
-            cloud = args.config
+            cloud = args.zone ?: args.domain
         }
 
         if(args.credential == null && !cloud.serviceUsername) {

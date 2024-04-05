@@ -92,7 +92,7 @@ class NetworkSync {
                 owner: cloud.owner,
                 category:"olvm.plugin.netork.${cloud.id}",
                 name:cloudItem.name(),
-                displayName:cidr ?: cloudItem.name(),
+                displayName:cloudItem.name(),
                 code:"olvm.plugin.network.${cloud.id}.${cloudItem.id()}",
                 uniqueId:cloudItem.id(),
                 externalId:cloudItem.id(),
@@ -128,7 +128,11 @@ class NetworkSync {
 
             if (existingItem.name != masterItem.name()) {
                 existingItem.name = masterItem.name()
-                existingItem.displayName = cidr ?: masterItem.name()
+                existingItem.displayName = masterItem.name()
+                save = true
+            }
+            if (existingItem.displayName != masterItem.name()) {
+                existingItem.displayName = masterItem.name()
                 save = true
             }
             if (existingItem.cidr != cidr) {

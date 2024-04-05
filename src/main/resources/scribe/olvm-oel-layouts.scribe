@@ -12,7 +12,7 @@ resource "virtual-image" "olvm-image-morpheus-oel-7_9" {
 	osType {
 		code = "oracle.64"
 	}
-	zoneType = "cloud.olvm.cloud"
+	zoneType = "olvm"
 }
 
 resource "workload-type" "olvm-oel-7_9" {
@@ -30,12 +30,12 @@ resource "workload-type" "olvm-oel-7_9" {
 	cloneType = "oraclelinux"
 	priorityOrder = 0
 	serverType = "vm"
-	providerType = "cloud.olvm.cloud"
+	providerType = "olvm"
 	containerPorts = [{code = "oraclelinux.22"}]
 	actions = [{code = "generic-remove-node"}]
 	checkTypeCode = "containerCheck"
 	virtualImage = virtual-image.olvm-image-morpheus-oel-7_9
-	provisionType = "cloud.olvm.provision"
+	provisionType = "olvm-provision-standard"
 	backupType = "olvmSnapshot"
 }
 
@@ -67,7 +67,7 @@ resource "instance-type-layout" "olvm-oel-7_9-single" {
 		workload-type-set.olvm-oel-7_9-set
 	]
 	actions = [{code = "generic-add-node"}]
-	provisionType = "cloud.olvm.provision"
+	provisionType = "olvm-provision-standard"
 }
 
 resource "scale-action" "olvm-oel-7_9-single" {

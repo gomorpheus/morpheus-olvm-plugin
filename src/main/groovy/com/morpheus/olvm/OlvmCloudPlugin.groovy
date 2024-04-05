@@ -28,6 +28,11 @@ class OlvmCloudPlugin extends Plugin {
     }
 
     @Override
+    String getDescription() {
+        return 'This plugin adds the ability to integrate with Oracle Linux Virtualization Manager'
+    }
+
+    @Override
     void initialize() {
         this.setName("OLVM Cloud")
         this.registerProvider(new OlvmCloudProvider(this,this.morpheus))

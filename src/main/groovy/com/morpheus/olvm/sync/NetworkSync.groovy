@@ -78,7 +78,7 @@ class NetworkSync {
                 morpheusContext.async.network.type.search(new DataQuery().withFilter(new DataFilter<String>('code', 'olvm-logical-network'))).blockingGet().items?.first()
 
             def network = cloudItem.network()
-            def cidr = network?.ip() ? NetworkUtility.networkToCidr(network?.ip().address(), network?.ip().netmask()) : null
+            def cidr = network?.ip() ? NetworkUtility.networkToCidr(network?.ip().address(), network?.ip().netmask()) : '0.0.0.0/1'
 
             // Check to see if network belongs to a data center
             def datacenter
@@ -122,7 +122,7 @@ class NetworkSync {
             def existingItem = updateItem.existingItem
             def save = false
             def network = masterItem.network()
-            def cidr = network.ipPresent() ? NetworkUtility.networkToCidr(network.ip().address(), network.ip().netmask()) : null
+            def cidr = network.ipPresent() ? NetworkUtility.networkToCidr(network.ip().address(), network.ip().netmask()) : '0.0.0.0/1'
             def description = cidr ?: "An OLVM logical network"
             def active = network.statusPresent() ? network.status() == NetworkStatus.OPERATIONAL : true
 

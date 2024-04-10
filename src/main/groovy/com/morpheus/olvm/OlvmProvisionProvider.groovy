@@ -152,10 +152,23 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			fieldContext:'config',
 			fieldLabel:'Datacenter',
 			required:true,
-			noBlank:true,
+			noBlank:false,
 			inputType:OptionType.InputType.SELECT,
 			displayOrder:100,
-			optionSource:'olvmDatacenters'
+			optionSource:'olvmDatacenters',
+			noBlank:true,
+			visibleOnCode:'config.cloudDatacenterId:all'
+		])
+		options << new OptionType([
+			name:'cloudDatacenter',
+			code:'olvm.plugin.provision.cloudDatacenter',
+			category:'provisionType.olvm',
+			fieldName:'cloudDatacenterId',
+			fieldContext:'config',
+			fieldLabel:'Datacenter',
+			inputType:OptionType.InputType.HIDDEN,
+			displayOrder:1000,
+			optionSource:'olvmCloudConfiguredDatacenter'
 		])
 		options << new OptionType([
 			name:'cluster',
@@ -722,9 +735,8 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		log.debug("validateWorkload: ${opts}")
 		ServiceResponse rtn = new ServiceResponse(true, null, [:], null)
 		try {
-			def cloud = morpheus.async.cloud.getCloudById(opts.cloud?.id ?: opts.zoneId).blockingGet()
 			def validateTemplate = opts.template != null
-			def validationResults = OlvmComputeUtility.validateServerConfig(morpheus, [cloud:cloud, validateTemplate:validateTemplate] + opts)
+			def validationResults = OlvmComputeUtility.validateServerConfig(morpheus, [validateTemplate:validateTemplate] + opts)
 			if(!validationResults.success) {
 				validationResults.errors?.each { it ->
 					rtn.addError(it.field, it.msg)
@@ -772,7 +784,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		catch (Throwable t) {
 			log.error("runWorkload error: ${t.message}", t)
 			provisionResponse.setError(t.message)
-			return new ServiceResponse(success: false, msg:t.message, error:e.message, data: provisionResponse)
+			return new ServiceResponse(success: false, msg:t.message, error:t.message, data: provisionResponse)
 		}
 		finally {
 			if (closeConnection)
@@ -1344,7 +1356,16 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 
 		// get data center and cluster information
 		def zonePoolService = morpheus.async.cloud.pool
-		def datacenter = zonePoolService.get(config.datacenterId.toLong()).blockingGet()
+		def datacenter
+		if (cloud.configMap.datacenter == 'all') {
+			datacenter = zonePoolService.get(config.datacenterId.toLong()).blockingGet()
+		}
+		else {
+			datacenter = zonePoolService.find(
+				new DataQuery().withFilter(new DataFilter('externalId', cloud.configMap.datacenter))
+			).blockingGet()
+		}
+
 		def cluster = zonePoolService.get(config.clusterId.toLong()).blockingGet()
 
 		def runConfig = [

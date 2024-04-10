@@ -47,7 +47,7 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
 
     @Override
     List<String> getMethodNames() {
-        return new ArrayList<String>(['olvmDatacenters', 'olvmCloudDatacenters', 'olvmClusters', 'olvmTemplates'])
+        return new ArrayList<String>(['olvmDatacenters', 'olvmCloudDatacenters', 'olvmClusters', 'olvmTemplates', 'olvmCloudConfiguredDatacenter'])
     }
 
     def olvmTemplates(args) {
@@ -65,6 +65,11 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
         return rtn
     }
 
+    def olvmCloudConfiguredDatacenter(args) {
+        Cloud cloud = loadCloud(args)
+        return cloud.configMap.datacenter
+    }
+
     def olvmCloudDatacenters(args) {
         Cloud cloud = loadCloud(args)
         def rtn
@@ -74,7 +79,7 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
                 connection = OlvmComputeUtility.getConnection(cloud)
                 def dcResult = OlvmComputeUtility.listDatacenters([connection: connection])
                 if (dcResult.success && dcResult.data.datacenters) {
-                    rtn = [[name: morpheusContext.services.localization.get('gomorpheus.label.all'), value: '']]
+                    rtn = [[name: morpheusContext.services.localization.get('gomorpheus.label.all'), value: 'all']]
                     for (dc in dcResult.data.datacenters) {
                         rtn << [name: "${dc.name()}", value: dc.id()]
                     }
@@ -88,14 +93,18 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
     }
 
     def olvmDatacenters(args) {
-        return getCloudPools(args, 'datacenter')
+        def cloud = loadCloud(args)
+        if (cloud.configMap.datacenter != 'all')
+            return [[name:'From Cloud Config', value:'good', isDefault:true]]
+        else
+            return getCloudPools(args, 'datacenter')
     }
     def olvmClusters(args) {
         return getCloudPools(args, 'cluster')
     }
 
-    protected getCloudPools(args, type) {
-        Cloud cloud = loadCloud(args)
+    protected getCloudPools(args, type, cloud = null) {
+        cloud = cloud ?: loadCloud(args)
         def rtn = []
         def pools = morpheusContext.async.cloud.pool.search(
             new DataQuery().withFilters(

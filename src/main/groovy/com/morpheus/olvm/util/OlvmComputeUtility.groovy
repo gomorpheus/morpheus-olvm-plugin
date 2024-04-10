@@ -138,13 +138,14 @@ class OlvmComputeUtility {
     static validateServerConfig(MorpheusContext morpheusContext, Map opts =[:]) {
         def rtn = [success:false, errors: []]
         try {
-            def cloud = opts.cloud ?: morpheusContext.async.cloud.getCloudById(opts.zoneId?.toLong()).blockingGet()
+            def cloudId = opts.cloud?.id.toLong() ?: opts.zoneId?.toLong()
+            def cloud = morpheusContext.async.cloud.getCloudById(opts.zoneId?.toLong()).blockingGet()
             def configMap = cloud.configMap
             // Validate enough Elastic IPs left
-            if(!configMap.datacenterId) {
+            if(configMap.datacenter == 'all' && !opts.config?.datacenterId) {
                 rtn.errors += [field: 'datacenterId', msg: 'You must choose a datacenter']
             }
-            if(!configMap.datacenterId) {
+            if(!opts.config.clusterId) {
                 rtn.errors += [field: 'clusterId', msg: 'You must choose a cluster']
             }
             rtn.success = (rtn.errors.size() == 0)

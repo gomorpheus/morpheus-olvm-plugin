@@ -195,30 +195,101 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	Collection<OptionType> getNodeOptionTypes() {
 		Collection<OptionType> nodeOptions = []
 		nodeOptions << new OptionType([
-			name:'datacenter',
-			code:'olvm.plugin.provision.node.datacenter',
-			category:'provisionType.node.olvm',
-			fieldName:'datacenterId',
-			fieldContext:'config',
-			fieldLabel:'Datacenter',
-			required:true,
-			noBlank:true,
-			inputType:OptionType.InputType.SELECT,
+			name:'image',
+			code:'olvm-node-image',
+			fieldName:'virtualImage.id',
+			fieldContext:'domain',
+			fieldLabel:'VM Image',
+			inputType:OptionType.InputType.TYPEAHEAD,
 			displayOrder:100,
-			optionSource:'olvmDatacenters'
+			required:false,
+			optionSource:'olvmQcowImages'
 		])
 		nodeOptions << new OptionType([
-			name:'cluster',
-			code:'olvm.plugin.provision.node.cluster',
-			category:'provisionType.node.olvm',
-			fieldName:'clusterId',
-			fieldContext:'config',
-			fieldLabel:'Cluster',
-			required:true,
-			noBlank:true,
-			inputType:OptionType.InputType.SELECT,
-			displayOrder:110,
-			optionSource:'olvmClusters'
+			name:'mountLogs',
+			code:'olvm-node-log-folder',
+			fieldName:'mountLogs',
+			fieldContext:'domain',
+			fieldLabel:'Log Folder',
+			inputType:OptionType.InputType.TEXT,
+			displayOrder:101,
+			required:false
+		])
+		nodeOptions << new OptionType([
+			name:'mountConfig',
+			code:'olvm-node-config-folder',
+			fieldName:'mountConfig',
+			fieldContext:'domain',
+			fieldLabel:'Config Folder',
+			inputType:OptionType.InputType.TEXT,
+			displayOrder:102,
+			required:false
+		])
+		nodeOptions << new OptionType([
+			name:'mountData',
+			code:'olvm-node-deploy-folder',
+			fieldName:'mountData',
+			fieldContext:'domain',
+			fieldLabel:'Deploy Folder',
+			inputType:OptionType.InputType.TEXT,
+			displayOrder:103,
+			helpText:'(Optional) If using deployment services, this mount point will be replaced with the contents of said deployments.',
+			required:false
+		])
+		nodeOptions << new OptionType([
+			name:'checkTypeCode',
+			code:'olvm-node-check-type-code',
+			fieldName:'checkTypeCode',
+			fieldContext:'domain',
+			fieldLabel:'CheckType',
+			inputType:OptionType.InputType.HIDDEN,
+			defaultValue:'vmCheck',
+			displayOrder:104,
+			required:false
+		])
+		nodeOptions << new OptionType([
+			name:'statTypeCode',
+			code:'olvm-node-stat-type-code',
+			fieldName:'statTypeCode',
+			fieldContext:'domain',
+			fieldLabel:'statTypeCode',
+			inputType:OptionType.InputType.HIDDEN,
+			defaultValue:'vm',
+			displayOrder:104,
+			required:false
+		])
+		nodeOptions << new OptionType([
+			name:'logTypeCode',
+			code:'olvm-node-log-type-code',
+			fieldName:'logTypeCode',
+			fieldContext:'domain',
+			fieldLabel:'logTypeCode',
+			inputType:OptionType.InputType.HIDDEN,
+			defaultValue:'vm',
+			displayOrder:104,
+			required:false
+		])
+		nodeOptions << new OptionType([
+			name:'serverType',
+			code:'olvm-node-server-type',
+			fieldName:'serverType',
+			fieldContext:'domain',
+			fieldLabel:'serverType',
+			inputType:OptionType.InputType.HIDDEN,
+			defaultValue:'vm',
+			displayOrder:105,
+			required:false
+		])
+		nodeOptions << new OptionType([
+			name:'showServerLogs',
+			code:'olvm-node-show-server-logs',
+			fieldName:'showServerLogs',
+			fieldContext:'domain',
+			fieldLabel:'showServerLogs',
+			inputType:OptionType.InputType.HIDDEN,
+			defaultValue:'true',
+			displayOrder:105,
+			required:false
 		])
 		return nodeOptions
 	}
@@ -919,8 +990,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 					}
 				}
 
-				//TODO: network adapters
-				//controllers
+				//network adapters
 				resizeRequest?.interfacesAdd?.eachWithIndex { networkAdd, index ->
 					log.info("adding network: ${networkAdd}")
 					def newIndex = server.interfaces?.size()

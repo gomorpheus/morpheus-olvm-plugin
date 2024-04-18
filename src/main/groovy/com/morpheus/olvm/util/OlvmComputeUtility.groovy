@@ -281,6 +281,11 @@ class OlvmComputeUtility {
                     return d.status() == DiskStatus.OK
                 }
 
+                // HACK: OLVM is so stupid.  There is a lag between when the api reports the disk status as OK and when
+                // the disk can be used for a VM.  If done too quickly afterwards, the VM created will fail saying the
+                // disk is locked, when its actually not.  So we are forcing a 3 second delay between the two operations
+                sleep(3000l)
+
                 // Next we need to create a temporary VM and attach our disk to it
                 def vmsService = connection.systemService().vmsService()
                 def newVm = vmsService.add().vm(
@@ -376,7 +381,7 @@ class OlvmComputeUtility {
             TrustManager[] trustAllCertificates = new TrustManager[]{
                 new X509TrustManager() {
                     public X509Certificate[] getAcceptedIssuers() {
-                        return null;
+                        return null
                     }
 
                     public void checkClientTrusted(X509Certificate[] certs, String authType) {
@@ -546,11 +551,19 @@ class OlvmComputeUtility {
                 closeConnection = true
             }
             def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
-            vmService.start().send()
+            def vm = vmService.get().send().vm()
 
-            // wait for the VM to be up
-            rtn = waitForSomeStuffToHappen([label:"Start vm ${opts.server?.name}", timeout:(5l * 60l * 1000l)]) {
-                return vmService.get().send().vm().status() == VmStatus.UP
+            if (vm.status() == VmStatus.UP) {
+                vmService.start().send()
+
+                // wait for the VM to be up
+                rtn = waitForSomeStuffToHappen([label: "Start vm ${opts.server?.name}", timeout: (5l * 60l * 1000l)]) {
+                    return vmService.get().send().vm().status() == VmStatus.UP
+                }
+            }
+            else {
+                // if its already started then just ignore
+                rtn = ServiceResponse.success()
             }
         }
         finally {

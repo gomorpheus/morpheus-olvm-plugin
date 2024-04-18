@@ -10,6 +10,7 @@ import com.morpheusdata.core.data.DataQuery
 import com.morpheusdata.model.AccountCredential
 import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.ComputeServer
+import com.morpheusdata.model.ImageType
 import com.morpheusdata.model.projection.CloudPoolIdentity
 import groovy.util.logging.Slf4j
 import io.reactivex.rxjava3.core.Observable
@@ -47,7 +48,21 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
 
     @Override
     List<String> getMethodNames() {
-        return new ArrayList<String>(['olvmDatacenters', 'olvmCloudDatacenters', 'olvmClusters', 'olvmTemplates', 'olvmCloudConfiguredDatacenter'])
+        return new ArrayList<String>(['olvmDatacenters', 'olvmCloudDatacenters', 'olvmClusters', 'olvmTemplates', 'olvmCloudConfiguredDatacenter', 'olvmQcowImages'])
+    }
+
+    def olvmQcowImages(args) {
+        def rtn = []
+        args = args instanceof Object[] ? args.getAt(0) : args
+        def images = morpheusContext.async.virtualImage.listIdentityProjections(args?.accountId?.toLong(), ImageType.qcow2).toList().blockingGet()
+        if(images) {
+            if(args.phrase) {
+                rtn = images.findAll{it.name.toLowerCase().contains(args.phrase.toLowerCase())}.collect { img -> [name: img.name, value: img.id] }.sort { it.name }
+            } else {
+                rtn = images.collect { img -> [name: img.name, value: img.id] }.sort { it.name }
+            }
+        }
+        return rtn
     }
 
     def olvmTemplates(args) {

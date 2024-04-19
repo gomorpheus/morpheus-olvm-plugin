@@ -302,17 +302,6 @@ class OlvmCloudProvider implements CloudProvider {
 				def config = cloudInfo.getConfigMap()
 				def username, password
 
-				 if(validateCloudRequest.credentialType?.toString().isNumber()) {
-					  username = validateCloudRequest.credentialUsername
-					  password = validateCloudRequest.credentialPassword
-
-					  if(!username) {
-						  return new ServiceResponse(success: false, msg: 'Enter a username', errors: ['credential.username': 'Required field'])
-					  }
-					  if(!password) {
-						  return new ServiceResponse(success: false, msg: 'Enter a password', errors: ['credential.password': 'Required field'])
-					  }
-				 }
 				 if(validateCloudRequest.credentialType == 'local') {
 					  username = cloudInfo.serviceUsername
 					  password = cloudInfo.servicePassword
@@ -323,6 +312,17 @@ class OlvmCloudProvider implements CloudProvider {
 					  if(!password) {
 						  return new ServiceResponse(success: false, msg: 'Enter a password', errors: ['servicePassword': 'Required field'])
 					  }
+				 }
+				else {
+					 username = validateCloudRequest.credentialUsername
+					 password = validateCloudRequest.credentialPassword
+
+					 if (!username) {
+						 return new ServiceResponse(success: false, msg: 'Enter a username', errors: ['credential.username': 'Required field'])
+					 }
+					 if (!password) {
+						 return new ServiceResponse(success: false, msg: 'Enter a password', errors: ['credential.password': 'Required field'])
+					 }
 				 }
 
 				//test creds

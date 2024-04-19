@@ -183,6 +183,23 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			displayOrder:110,
 			optionSource:'olvmClusters'
 		])
+		options << new OptionType([
+			name:'skip agent install',
+			code: 'olvm.plugin.provision.noAgent',
+			category:'provisionType.olvm',
+			fieldName: 'noAgent',
+			fieldCode: 'gomorpheus.optiontype.SkipAgentInstall',
+			fieldLabel: 'Skip Agent Install',
+			fieldContext: 'config',
+			fieldGroup: "Advanced Options",
+			required: false,
+			enabled: true,
+			editable: false,
+			global: false,
+			displayOrder: 104,
+			inputType: OptionType.InputType.CHECKBOX,
+			helpBlock: 'Skipping Agent installation will result in a lack of logging and guest operating system statistics. Automation scripts may also be adversely affected.'
+		])
 		return options
 	}
 
@@ -757,6 +774,11 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	@Override
 	Boolean createDefaultInstanceType() {
 		return true
+	}
+
+	@Override
+	String getDefaultInstanceTypeDescription() {
+		return "This instance type will allow you to select any OLVM image for deployment"
 	}
 
 	/**

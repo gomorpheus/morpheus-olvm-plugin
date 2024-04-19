@@ -111,7 +111,7 @@ class NetworkSync {
             adds << add
         }
         if (adds) {
-            morpheusContext.async.network.bulkCreate(adds).blockingGet()
+            morpheusContext.async.network.create(adds).blockingGet()
         }
     }
 
@@ -151,6 +151,6 @@ class NetworkSync {
                 updates << existingItem
         }
         if (updates)
-            morpheusContext.async.network.bulkSave(updates).blockingGet()
+            morpheusContext.async.network.save(updates).blockingGet()
     }
 }

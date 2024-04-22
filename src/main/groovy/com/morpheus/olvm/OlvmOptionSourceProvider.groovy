@@ -152,8 +152,8 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
             }
         } else {
             def config = [
-                username: cloud.serviceUsername,
-                password: cloud.servicePassword
+                username: cloud.serviceUsername ?: args.zone.serviceUsername,
+                password: cloud.servicePassword ?: args.zone.servicePassword
             ]
             rtn.setConfigMap(rtn.getConfigMap() + config)
             rtn.accountCredentialData = morpheusContext.services.accountCredential.loadCredentialConfig(args.credential, config).data

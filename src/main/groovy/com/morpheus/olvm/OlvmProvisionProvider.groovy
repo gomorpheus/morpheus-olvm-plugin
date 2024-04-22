@@ -88,7 +88,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		//lets figure out what image we are deploying
 		Connection connection
 		try {
-			connection = OlvmComputeUtility.getConnection(server.cloud)
+			connection = OlvmComputeUtility.getConnection(server.cloud, morpheus)
 			def imageType = workload.getConfigMap().imageType ?: 'default'
 			//amazon generic instance type has a radio button for this
 			def virtualImage = getWorkloadImage(workload, opts)
@@ -535,7 +535,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		ServiceResponse<PrepareHostResponse> resp = new ServiceResponse<>()
 		resp.data = new PrepareHostResponse(computeServer: server, disableCloudInit: false, options: [sendIp: false])
 
-		Connection connection = OlvmComputeUtility.getConnection(cloud)
+		Connection connection = OlvmComputeUtility.getConnection(cloud, morpheus)
 
 		try {
 			def layout = server?.layout
@@ -599,7 +599,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		ProvisionResponse provisionResponse = new ProvisionResponse(success: true, installAgent: false)
 		try {
 			Cloud cloud = server.cloud
-			connection = OlvmComputeUtility.getConnection(cloud)
+			connection = OlvmComputeUtility.getConnection(cloud, morpheus)
 			VirtualImage virtualImage = server.sourceImage
 
 			def runConfig = buildHostRunConfig(server, hostRequest, virtualImage, connection, opts)
@@ -861,7 +861,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		try {
 			Cloud cloud = server.cloud
 			if (!connection) {
-				connection = OlvmComputeUtility.getConnection(cloud)
+				connection = OlvmComputeUtility.getConnection(cloud, morpheus)
 				closeConnection = true
 			}
 			VirtualImage virtualImage = server.sourceImage
@@ -918,7 +918,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		ServicePlan plan = resizeRequest.plan
 		try {
 			if (!connection) {
-				connection = OlvmComputeUtility.getConnection(cloud)
+				connection = OlvmComputeUtility.getConnection(cloud, morpheus)
 				closeConnection = true
 			}
 			def serverId = server.id
@@ -1173,7 +1173,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		if(server && serverUuid) {
 			Connection connection
 			try {
-				connection = OlvmComputeUtility.getConnection(server.cloud)
+				connection = OlvmComputeUtility.getConnection(server.cloud, morpheus)
 				def serverDetails = OlvmComputeUtility.checkServerReady([connection:connection, server:server])
 				if (serverDetails.success && serverDetails.data) {
 					rtn.externalId = serverUuid
@@ -1298,7 +1298,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	ServiceResponse deleteServer(ComputeServer server) {
 		log.debug("deleteServer: ${server}")
 		if(server?.externalId && (server.managed == true || server.computeServerType?.controlPower)) {
-			def deleteResult = OlvmComputeUtility.deleteServer([cloud:server.cloud, server:server])
+			def deleteResult = OlvmComputeUtility.deleteServer([cloud:server.cloud, server:server], morpheus)
 
 			if (deleteResult.success) {
 				return ServiceResponse.success()

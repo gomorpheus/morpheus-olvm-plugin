@@ -7,10 +7,6 @@ import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.ComputeServerInterface
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
-import org.apache.http.HttpHost
-import org.apache.http.impl.client.CloseableHttpClient
-import org.apache.http.impl.client.HttpClients
-import org.apache.http.impl.conn.DefaultProxyRoutePlanner
 import org.ovirt.engine.sdk4.Connection
 import org.ovirt.engine.sdk4.builders.CpuBuilder
 import org.ovirt.engine.sdk4.builders.NicBuilder
@@ -164,14 +160,15 @@ class OlvmComputeUtility {
 
         try {
             if (!connection) {
-                connection = OlvmComputeUtility.getConnection(opts.cloud)
+                connection = getConnection(opts.cloud)
             }
 
             def templateService = connection.systemService().templatesService()
             if (opts.imageName) {
+                def imageName = opts.imageName.replaceAll(' ', '_')
                 def templates =
-                    templateService.list().search("name=${opts.imageName}").caseSensitive(false).send().templates()
-                rtn.data = [template:templates?.first()]
+                    templateService.list().search("name=${imageName}").caseSensitive(false).send().templates()
+                rtn.data = [template:(templates?.size() > 0 ? templates.first() : null)]
             }
             else if (opts.imageId) {
                 def template =
@@ -198,7 +195,7 @@ class OlvmComputeUtility {
         def closeConnection = false
         try {
             if (!connection) {
-                connection getConnection(opts.cloud)
+                connection = getConnection(opts.cloud)
                 closeConnection = true
             }
 
@@ -1060,13 +1057,13 @@ class OlvmComputeUtility {
         return rtn
     }
 
-    static deleteServer(opts) {
+    static deleteServer(opts, MorpheusContext ctx = null) {
         def rtn = ServiceResponse.prepare()
         Connection connection = opts.connection
         def closeConnection = false
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
+                connection = getConnection(opts.cloud, ctx)
                 closeConnection = true
             }
 
@@ -1334,9 +1331,10 @@ class OlvmComputeUtility {
         return code
     }
 
-    static getConnection(Cloud cloud) {
-        if (!cloud.accountCredentialLoaded) {
-            // TOOD: load credential data
+    static getConnection(Cloud cloud, MorpheusContext ctx = null) {
+        if (!cloud.accountCredentialLoaded && ctx) {
+            cloud.accountCredentialData = ctx.async.cloud.loadCredentials(cloud.id).blockingGet()?.data
+            cloud.accountCredentialLoaded = true
         }
 
         def config = [

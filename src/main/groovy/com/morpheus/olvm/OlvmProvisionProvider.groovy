@@ -90,7 +90,6 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		try {
 			connection = OlvmComputeUtility.getConnection(server.cloud, morpheus)
 			def imageType = workload.getConfigMap().imageType ?: 'default'
-			//amazon generic instance type has a radio button for this
 			def virtualImage = getWorkloadImage(workload, opts)
 			def config = workload.configMap
 			if (virtualImage) {
@@ -1321,16 +1320,17 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		else if(imageType == 'local' && (containerConfig.localImageId || containerConfig.template)) {
 			Long localImageId = getImageId(containerConfig.localImageId) ?: getImageId(containerConfig.template)
 			if(localImageId) {
-				rtn = morpheus.async.virtualImage.get(localImageId).blockingGet()
+				rtn = morpheus.async.virtualImage.location.get(localImageId).blockingGet()
 			}
 		}
 		else if(workload.workloadType.virtualImage) {
 			rtn = workload.workloadType.virtualImage
 		}
 		else if (containerConfig.templateId) {
-			rtn = morpheus.async.virtualImage.find(
+			def location = morpheus.async.virtualImage.location.find(
 				new DataQuery().withFilters(new DataFilter<String>('externalId', containerConfig.templateId))
 			).blockingGet()
+			rtn = morpheus.async.virtualImage.get(location.virtualImage.id).blockingGet()
 		}
 		return rtn
 	}

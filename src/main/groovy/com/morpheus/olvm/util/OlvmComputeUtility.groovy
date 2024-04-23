@@ -264,7 +264,7 @@ class OlvmComputeUtility {
 
 
                 // TODO: should we use a progress input stream here to update as we upload?
-                pushDataToTarget(qcowInputStream, transferUrl, connection)
+                pushDataToTarget(qcowInputStream, transferUrl, connection, cloudFile.contentLength)
 
                 xferService.finalize_().send()
 
@@ -370,7 +370,7 @@ class OlvmComputeUtility {
         return rtn
     }
 
-    static pushDataToTarget(Qcow2InputStream inputStream, URL url, Connection con) {
+    static pushDataToTarget(Qcow2InputStream inputStream, URL url, Connection con, Long contentLength = null) {
     //static pushDataToTarget(InputStream inputStream, URL url, Connection con) {
         HttpURLConnection connection
         try {
@@ -404,6 +404,13 @@ class OlvmComputeUtility {
             connection.setDoOutput(true); // Indicates that this connection will send data
             connection.setRequestProperty("Content-Type", "application/octet-stream")
             connection.setRequestProperty("Authorization", "Bearer ${con.authenticate()}".toString())
+
+            if (contentLength) {
+                connection.setFixedLengthStreamingMode(contentLength)
+            }
+            else {
+                connection.setChunkedStreamingMode(2 * 1024 * 1024) // default to 2 MB chunks
+            }
 
             // Get the OutputStream from the connection
             OutputStream outputStream = connection.getOutputStream()

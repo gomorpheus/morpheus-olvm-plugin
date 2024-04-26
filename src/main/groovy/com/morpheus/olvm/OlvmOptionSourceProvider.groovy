@@ -3,17 +3,18 @@ package com.morpheus.olvm
 import com.morpheus.olvm.util.OlvmComputeUtility
 import com.morpheusdata.core.AbstractOptionSourceProvider
 import com.morpheusdata.core.MorpheusContext
-import com.morpheusdata.core.MorpheusInstanceThresholdService
 import com.morpheusdata.core.Plugin
+import com.morpheusdata.core.data.DataAndFilter
 import com.morpheusdata.core.data.DataFilter
+import com.morpheusdata.core.data.DataOrFilter
 import com.morpheusdata.core.data.DataQuery
+import com.morpheusdata.core.data.DataQueryResult
 import com.morpheusdata.model.AccountCredential
 import com.morpheusdata.model.Cloud
-import com.morpheusdata.model.ComputeServer
 import com.morpheusdata.model.ImageType
-import com.morpheusdata.model.projection.CloudPoolIdentity
+import com.morpheusdata.model.VirtualImage
+import com.morpheusdata.model.VirtualImageType
 import groovy.util.logging.Slf4j
-import io.reactivex.rxjava3.core.Observable
 
 @Slf4j
 class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
@@ -66,17 +67,38 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
     }
 
     def olvmTemplates(args) {
+        args = args instanceof Object[] ? args.getAt(0) : args
         Cloud cloud = loadCloud(args)
         def rtn = []
-        def templates = morpheusContext.async.virtualImage.location.search(
+
+        // first grab all images that have been sync'd in by this cloud
+        def templates = morpheusContext.async.virtualImage.location.listIdentityProjections(
             new DataQuery().withFilters(
                 new DataFilter<String>('refType', 'ComputeZone'),
                 new DataFilter<String>('refId', cloud.id)
             )
-        ).blockingGet()
-        for (template in templates.items) {
-            rtn << [name:template.imageName, value:template.externalId]
+        ).blockingSubscribe { imageLocation ->
+            rtn << [name:imageLocation.virtualImage.name, value:imageLocation.virtualImage.id]
         }
+
+        // then grab all qcow2 images from morpheus that have been user uploaded. These SHOULD also run in olvm
+        def images = morpheusContext.async.virtualImage.search(
+            new DataQuery().withFilters(
+                new DataFilter<VirtualImageType>('imageType', ImageType.qcow2.toString()),
+                new DataFilter<Boolean>('userUploaded', true)
+            )
+        ).blockingGet()
+
+        for (image in images.items) {
+            rtn << [name:image.name, value:image.id]
+        }
+
+        if(args.phrase) {
+            rtn = rtn.findAll{ it.name.toLowerCase().contains(args.phrase.toLowerCase()) }.unique { it.name }.sort { it.name }
+        } else {
+            rtn = rtn.unique{ it.name }.sort { it.name }
+        }
+
         return rtn
     }
 

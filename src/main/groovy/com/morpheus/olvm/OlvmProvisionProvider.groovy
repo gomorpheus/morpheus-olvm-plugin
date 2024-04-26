@@ -31,6 +31,7 @@ import com.morpheusdata.model.StorageVolume
 import com.morpheusdata.model.StorageVolumeType
 import com.morpheusdata.model.VirtualImage
 import com.morpheusdata.model.VirtualImageLocation
+import com.morpheusdata.model.VirtualImageType
 import com.morpheusdata.model.Workload
 import com.morpheusdata.model.WorkloadType
 import com.morpheusdata.model.projection.VirtualImageIdentityProjection
@@ -308,6 +309,12 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			required:false
 		])
 		return nodeOptions
+	}
+
+	@Override
+	// images can be uploaded in raw, qcow2, vhdx, vdi, or vmdk formats and will be converted to qcow2
+	Collection<VirtualImageType> getVirtualImageTypes() {
+		return [new VirtualImageType(code: 'qcow2', name: 'QCOW2')]
 	}
 
 	/**
@@ -796,12 +803,12 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			name:'template',
 			code:'olvm.plugin.provision.template',
 			category:'provisionType.olvm',
-			fieldName:'templateId',
+			fieldName:'template',
 			fieldContext:'config',
 			fieldLabel:'Template',
 			required:true,
 			noBlank:true,
-			inputType:OptionType.InputType.SELECT,
+			inputType:OptionType.InputType.TYPEAHEAD,
 			displayOrder:110,
 			optionSource:'olvmTemplates'
 		])
@@ -1214,14 +1221,23 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	ServiceResponse stopServer(ComputeServer server) {
 		log.debug("stopServer: ${server}")
 		if(server?.externalId && (server.managed == true || server.computeServerType?.controlPower)) {
-			def stopResult = OlvmComputeUtility.stopVm([cloud:server.cloud, server: server])
+			Connection connection
+			try {
+				connection = OlvmComputeUtility.getConnection(server.cloud, morpheus)
+				def stopResult = OlvmComputeUtility.stopVm([server:server, connection:connection])
 
-			if (stopResult.success) {
-				return ServiceResponse.success()
-			} else {
-				return ServiceResponse.error('Failed to stop vm')
+				if (stopResult.success) {
+					return ServiceResponse.success()
+				}
+				else {
+					return ServiceResponse.error('Failed to stop vm')
+				}
 			}
-		} else {
+			finally {
+				connection?.close()
+			}
+		}
+		else {
 			log.info("stopServer - ignoring request for unmanaged instance")
 		}
 		ServiceResponse.success()
@@ -1236,14 +1252,23 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	ServiceResponse startServer(ComputeServer server) {
 		log.debug("startServer: ${server}")
 		if(server?.externalId && (server.managed == true || server.computeServerType?.controlPower)) {
-			def startResult = OlvmComputeUtility.startVm([cloud:server.cloud, server:server])
+			Connection connection
+			try {
+				connection = OlvmComputeUtility.getConnection(server.cloud, morpheus)
+				def startResult = OlvmComputeUtility.startVm([server:server, connection:connection])
 
-			if(startResult.success == true) {
-				return ServiceResponse.success()
-			} else {
-				return ServiceResponse.error('Failed to start vm')
+				if (startResult.success == true) {
+					return ServiceResponse.success()
+				}
+				else {
+					return ServiceResponse.error('Failed to start vm')
+				}
 			}
-		} else {
+			finally {
+				connection?.close()
+			}
+		}
+		else {
 			log.info("startServer - ignoring request for unmanaged instance")
 		}
 		ServiceResponse.success()
@@ -1326,11 +1351,8 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		else if(workload.workloadType.virtualImage) {
 			rtn = workload.workloadType.virtualImage
 		}
-		else if (containerConfig.templateId) {
-			def location = morpheus.async.virtualImage.location.find(
-				new DataQuery().withFilters(new DataFilter<String>('externalId', containerConfig.templateId))
-			).blockingGet()
-			rtn = morpheus.async.virtualImage.get(location.virtualImage.id).blockingGet()
+		else if (containerConfig.template) {
+			rtn = morpheus.async.virtualImage.get(containerConfig.template.value).blockingGet()
 		}
 		return rtn
 	}

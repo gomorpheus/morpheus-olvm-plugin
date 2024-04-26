@@ -557,7 +557,7 @@ class OlvmComputeUtility {
             def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
             def vm = vmService.get().send().vm()
 
-            if (vm.status() == VmStatus.UP) {
+            if (vm.status() != VmStatus.UP) {
                 vmService.start().send()
 
                 // wait for the VM to be up

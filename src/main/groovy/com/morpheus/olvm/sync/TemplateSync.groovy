@@ -204,7 +204,7 @@ class TemplateSync {
         def adds = []
         def removes = []
         for(def updateItem in updateList) {
-            if(!updateItem.existingItem.imageLocations.find { it.externalId == updateItem.masterItem.id() }) {
+            if(!updateItem.existingItem.imageLocations.find { it.externalId == updateItem.masterItem.id() && it.refId == cloud.id }) {
                 adds << new VirtualImageLocation(
                     virtualImage: updateItem.existingItem,
                     code:"olvm.plugin.template.${cloud.id}.${updateItem.masterItem.id()}",

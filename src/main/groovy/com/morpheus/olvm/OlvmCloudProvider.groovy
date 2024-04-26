@@ -491,6 +491,11 @@ class OlvmCloudProvider implements CloudProvider {
 		return false
 	}
 
+	@Override
+	Boolean provisionRequiresResourcePool() {
+		return false
+	}
+
 	/**
 	 * Called when a server should be started. Returning a response of success will cause corresponding updates to usage
 	 * records, result in the powerState of the computeServer to be set to 'on', and related instances set to 'running'

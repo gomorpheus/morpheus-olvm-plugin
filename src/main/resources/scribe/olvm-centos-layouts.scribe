@@ -51,7 +51,7 @@ resource "instance-type-layout" "olvm-centos-9-single" {
 	code = "olvm-centos-9-single"
 	name = "CentOS 9 VM"
 	sortOrder = 18
-	instanceVersion = "8"
+	instanceVersion = "9"
 	description = "This will provision a single vm"
 	instanceType {
 		code = "centos"

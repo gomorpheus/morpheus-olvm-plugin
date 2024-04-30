@@ -880,7 +880,7 @@ class OlvmComputeUtility {
             rtn.data = opts.disk
         }
         catch (Throwable t) {
-
+            log.error("Unable to add disk to vm: ${t.message}", t)
         }
         finally {
             if (closeConnection)

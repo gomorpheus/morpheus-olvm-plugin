@@ -961,10 +961,13 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 				resizeRequest.volumesAdd?.each {newVolumeProps ->
 					log.info("Adding New Volume")
 					def deviceName = OlvmComputeUtility.getDeviceName(newCounter)
+
+					// have to grab externalId for the selected datastore
+					def datastore = morpheus.async.cloud.datastore.get(newVolumeProps.datastoreId.toLong()).blockingGet()
 					def addDiskResult = OlvmComputeUtility.addDiskToVm([
 						connection:connection, vmId:server.externalId,
 						disk:[
-							maxStorage:newVolumeProps.maxStorage, name:newVolumeProps.name, datastore:[externalId:newVolumeProps.datastoreId],
+							maxStorage:newVolumeProps.maxStorage, name:newVolumeProps.name, datastore:[externalId:datastore.externalId],
 							deviceName:deviceName
 						]
 					])
@@ -980,6 +983,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 						externalId:newDisk.externalId,
 						deviceName:deviceName,
 						deviceDisplayName:deviceName,
+						datastore:datastore,
 						name: newVolumeProps.name,
 						displayOrder: newCounter,
 						status: 'provisioned',

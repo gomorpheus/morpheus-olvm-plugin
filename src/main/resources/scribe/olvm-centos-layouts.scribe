@@ -1,11 +1,11 @@
-// centos 9
+// centos 9 stream
 resource "virtual-image" "olvm-image-morpheus-centos-9" {
 	code = "olvm.plugin.image.morpheus.centos.9.amd64"
 	category = "olvm.plugin.image.morpheus.centos"
-	name = "Morpheus CentOS 9"
+	name = "Morpheus CentOS 9-Stream"
 	imageType = "qcow2"
-	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/centos/centos-9/morpheus-oracle-9-stream-x86_64-20240418.qcow2"
-	imagePath = "olvm/centos/centos-9"
+	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/centos/centos-9-stream/morpheus-oracle-9-stream-x86_64-20240418.qcow2"
+	imagePath = "olvm/centos/centos-9-stream"
 	isCloudInit = true
 	systemImage = true
 	installAgent = true
@@ -18,7 +18,7 @@ resource "virtual-image" "olvm-image-morpheus-centos-9" {
 resource "workload-type" "olvm-centos-9" {
 	code = "olvm-plugin-centos-9"
 	shortName = "centos"
-	name = "CentOS 9"
+	name = "CentOS 9-Stream"
 	ports = [22]
 	containerVersion = "9"
 	entryPoint = ""
@@ -49,7 +49,7 @@ resource "workload-type-set" "olvm-centos-9-set" {
 
 resource "instance-type-layout" "olvm-centos-9-single" {
 	code = "olvm-centos-9-single"
-	name = "CentOS 9 VM"
+	name = "CentOS 9-Stream VM"
 	sortOrder = 18
 	instanceVersion = "9"
 	description = "This will provision a single vm"
@@ -86,10 +86,10 @@ resource "scale-action" "olvm-centos-9-single" {
 resource "virtual-image" "olvm-image-morpheus-centos-8" {
 	code = "olvm.plugin.image.morpheus.centos.8.amd64"
 	category = "olvm.plugin.image.morpheus.centos"
-	name = "Morpheus CentOS 8"
+	name = "Morpheus CentOS 8-Stream"
 	imageType = "qcow2"
-	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/centos/centos-8/morpheus-oracle-8-x86_64-20240418.qcow2"
-	imagePath = "olvm/centos/centos-8"
+	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/centos/centos-8-stream/morpheus-oracle-8-x86_64-20240418.qcow2"
+	imagePath = "olvm/centos/centos-8-stream"
 	isCloudInit = true
 	systemImage = true
 	installAgent = true
@@ -102,7 +102,7 @@ resource "virtual-image" "olvm-image-morpheus-centos-8" {
 resource "workload-type" "olvm-centos-8" {
 	code = "olvm-plugin-centos-8"
 	shortName = "centos"
-	name = "CentOS 8"
+	name = "CentOS 8-Stream"
 	ports = [22]
 	containerVersion = "8"
 	entryPoint = ""
@@ -133,7 +133,7 @@ resource "workload-type-set" "olvm-centos-8-set" {
 
 resource "instance-type-layout" "olvm-centos-8-single" {
 	code = "olvm-centos-8-single"
-	name = "CentOS 8 VM"
+	name = "CentOS 8-Stream VM"
 	sortOrder = 19
 	instanceVersion = "8"
 	description = "This will provision a single vm"

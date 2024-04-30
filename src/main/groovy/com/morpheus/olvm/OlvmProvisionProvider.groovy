@@ -529,6 +529,11 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	}
 
 	@Override
+	String getNodeFormat() {
+		return 'vm'
+	}
+
+	@Override
 	ServiceResponse validateHost(ComputeServer computeServer, Map map) {
 		return ServiceResponse.success()
 	}

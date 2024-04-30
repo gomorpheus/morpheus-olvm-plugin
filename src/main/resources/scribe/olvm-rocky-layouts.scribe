@@ -1,0 +1,167 @@
+// rocky 9
+resource "virtual-image" "olvm-image-morpheus-rocky-9" {
+	code = "olvm.plugin.image.morpheus.rocky.9.amd64"
+	category = "olvm.plugin.image.morpheus.rocky"
+	name = "Morpheus Rocky Linux 9"
+	imageType = "qcow2"
+	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/rocky/rocky-9/morpheus-rocky-9-x86_64-20240418.qcow2"
+	imagePath = "olvm/rocky/rocky-9"
+	isCloudInit = true
+	systemImage = true
+	installAgent = true
+	osType {
+		code = "rocky.9.64"
+	}
+	zoneType = "olvm"
+}
+
+resource "workload-type" "olvm-rocky-9" {
+	code = "olvm-plugin-rocky-9"
+	shortName = "rocky"
+	name = "Rocky Linux 9"
+	ports = [22]
+	containerVersion = "9"
+	entryPoint = ""
+	mountLogs = "/var/log"
+	statTypeCode = "vm"
+	logTypeCode = "rocky"
+	showServerLogs = true
+	category = "rocky"
+	cloneType = "rocky"
+	priorityOrder = 0
+	serverType = "vm"
+	providerType = "olvm"
+	containerPorts = [{code = "rocky.22"}]
+	actions = [{code = "generic-remove-node"}]
+	checkTypeCode = "containerCheck"
+	virtualImage = virtual-image.olvm-image-morpheus-rocky-9
+	provisionType = "olvm-provision-standard"
+	backupType = "olvmSnapshot"
+}
+
+resource "workload-type-set" "olvm-rocky-9-set" {
+	code = "olvm-rocky-9-set"
+	containerType = workload-type.olvm-rocky-9
+	priorityOrder = 0
+	dynamicCount = true
+	containerCount = 1
+}
+
+resource "instance-type-layout" "olvm-rocky-9-single" {
+	code = "olvm-rocky-9-single"
+	name = "Rocky Linux 9 VM"
+	sortOrder = 18
+	instanceVersion = "9"
+	description = "This will provision a single vm"
+	instanceType {
+		code = "rocky"
+	}
+	serverCount = 1
+	hasAutoScale = true
+	portCount = 1
+	serverType = "vm"
+	enabled = true
+	creatable = true
+	supportsConvertToManaged = true
+	containers = [
+		workload-type-set.olvm-rocky-9-set
+	]
+	actions = [{code = "generic-add-node"}]
+	provisionType = "olvm-provision-standard"
+}
+
+resource "scale-action" "olvm-rocky-9-single" {
+	code = "olvm-rocky-9-single"
+	scaleType = "action"
+	layout = instance-type-layout.olvm-rocky-9-single
+	upAction {
+		code = "generic-add-node"
+	}
+	downAction {
+		code = "generic-remove-node"
+	}
+}
+
+// rocky 8
+resource "virtual-image" "olvm-image-morpheus-rocky-8" {
+	code = "olvm.plugin.image.morpheus.rocky.8.amd64"
+	category = "olvm.plugin.image.morpheus.rocky"
+	name = "Morpheus Rocky Linux 8"
+	imageType = "qcow2"
+	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/rocky/rocky-8/morpheus-rocky-8-x86_64-20240418.qcow2"
+	imagePath = "olvm/rocky/rocky-8"
+	isCloudInit = true
+	systemImage = true
+	installAgent = true
+	osType {
+		code = "rocky.8.64"
+	}
+	zoneType = "olvm"
+}
+
+resource "workload-type" "olvm-rocky-8" {
+	code = "olvm-plugin-rocky-8"
+	shortName = "rocky"
+	name = "Rocky Linux 8"
+	ports = [22]
+	containerVersion = "8"
+	entryPoint = ""
+	mountLogs = "/var/log"
+	statTypeCode = "vm"
+	logTypeCode = "rocky"
+	showServerLogs = true
+	category = "rocky"
+	cloneType = "rocky"
+	priorityOrder = 0
+	serverType = "vm"
+	providerType = "olvm"
+	containerPorts = [{code = "rocky.22"}]
+	actions = [{code = "generic-remove-node"}]
+	checkTypeCode = "containerCheck"
+	virtualImage = virtual-image.olvm-image-morpheus-rocky-8
+	provisionType = "olvm-provision-standard"
+	backupType = "olvmSnapshot"
+}
+
+resource "workload-type-set" "olvm-rocky-8-set" {
+	code = "olvm-rocky-8-set"
+	containerType = workload-type.olvm-rocky-8
+	priorityOrder = 0
+	dynamicCount = true
+	containerCount = 1
+}
+
+resource "instance-type-layout" "olvm-rocky-8-single" {
+	code = "olvm-rocky-8-single"
+	name = "Rocky Linux 8 VM"
+	sortOrder = 19
+	instanceVersion = "8"
+	description = "This will provision a single vm"
+	instanceType {
+		code = "rocky"
+	}
+	serverCount = 1
+	hasAutoScale = true
+	portCount = 1
+	serverType = "vm"
+	enabled = true
+	creatable = true
+	supportsConvertToManaged = true
+	containers = [
+		workload-type-set.olvm-rocky-8-set
+	]
+	actions = [{code = "generic-add-node"}]
+	provisionType = "olvm-provision-standard"
+}
+
+resource "scale-action" "olvm-rocky-8-single" {
+	code = "olvm-rocky-8-single"
+	scaleType = "action"
+	layout = instance-type-layout.olvm-rocky-8-single
+	upAction {
+		code = "generic-add-node"
+	}
+	downAction {
+		code = "generic-remove-node"
+	}
+}

@@ -255,7 +255,8 @@ class OlvmCloudProvider implements CloudProvider {
 			hasAutomation:false,
 			supportsConsoleKeymap:false,
 			platform:PlatformType.none,
-			provisionTypeCode:OlvmProvisionProvider.PROVISION_PROVIDER_CODE
+			provisionTypeCode:OlvmProvisionProvider.PROVISION_PROVIDER_CODE,
+			guestVm:true
 		)
 		serverTypes <<  new ComputeServerType(
 			name:'OLVM Instance',

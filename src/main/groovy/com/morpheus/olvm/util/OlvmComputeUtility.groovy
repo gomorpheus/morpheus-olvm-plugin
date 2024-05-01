@@ -1124,13 +1124,13 @@ class OlvmComputeUtility {
         return rtn
     }
 
-    static getSnapshot(opts) {
+    static getSnapshot(opts, MorpheusContext ctx = null) {
         def rtn = ServiceResponse.prepare()
         Connection connection = opts.connection
         def closeConnection = false
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
+                connection = getConnection(opts.cloud, ctx)
                 closeConnection = true
             }
             def snapshotService = connection.systemService().vmsService().vmService(opts.vmId).snapshotsService().snapshotService(opts.snapshotId)
@@ -1156,9 +1156,12 @@ class OlvmComputeUtility {
         try {
             if (!connection) {
                 connection = getConnection(opts.cloud)
+                opts.connection = connection
                 closeConnection = true
             }
 
+            // stop the vm before restoring
+            stopVm(opts)
             def vmService = connection.systemService().vmsService().vmService(opts.vmId)
             def snapshotService = vmService.snapshotsService().snapshotService(opts.snapshotId)
             snapshotService.restore().send()

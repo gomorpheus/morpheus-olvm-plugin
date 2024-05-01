@@ -5,6 +5,7 @@ import com.morpheus.olvm.util.OlvmComputeUtility
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.backup.BackupRestoreProvider
 import com.morpheusdata.core.backup.response.BackupRestoreResponse
+import com.morpheusdata.core.backup.util.BackupStatusUtility
 import com.morpheusdata.model.Backup
 import com.morpheusdata.model.BackupRestore
 import com.morpheusdata.model.BackupResult
@@ -56,6 +57,7 @@ class OlvmSnapshotRestoreProvider implements BackupRestoreProvider{
             Workload workload = morpheus.async.workload.get(opts.containerId).blockingGet()
             ComputeServer server = workload.server
             Cloud cloud = server.cloud
+            connection = OlvmComputeUtility.getConnection(cloud, morpheus)
             def vmId = server?.externalId
             def backupResultConfig = backupResult.getConfigMap()
             def snapshotId = backupResultConfig.snapshots?.collect{ it.snapshotId }.first()
@@ -64,7 +66,7 @@ class OlvmSnapshotRestoreProvider implements BackupRestoreProvider{
             if (restoreResult.success) {
                 // start vm
                 OlvmComputeUtility.startVm([connection:connection, vmId:vmId])
-                updateInstanceIp(server.id, vmId, cloud)
+                updateInstanceIp(server.id, vmId, connection)
                 rtn.data.updates = true
                 rtn.success = true
                 rtn.data.backupRestore.status = BackupStatusUtility.SUCCEEDED
@@ -92,8 +94,8 @@ class OlvmSnapshotRestoreProvider implements BackupRestoreProvider{
         return rtn
     }
 
-    def updateInstanceIp(Long morphServerId, String ec2InstanceId, Connection connection = null) {
-        log.debug("updateInstanceIp: {}, {}", morphServerId, ec2InstanceId)
+    def updateInstanceIp(Long morphServerId, String olvmInstanceId, Connection connection = null) {
+        log.debug("updateInstanceIp: {}, {}", morphServerId, olvmInstanceId)
         try {
             def morphServer = morpheus.async.computeServer.get(morphServerId).blockingGet()
             def serverDetails = OlvmComputeUtility.getServerDetail([connection:connection, serverId:morphServer.externalId])

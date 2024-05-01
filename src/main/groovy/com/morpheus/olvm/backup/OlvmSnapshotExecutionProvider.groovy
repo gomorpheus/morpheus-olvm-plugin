@@ -6,6 +6,7 @@ import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.backup.BackupExecutionProvider
 import com.morpheusdata.core.backup.response.BackupExecutionResponse
 import com.morpheusdata.core.backup.util.BackupStatusUtility
+import com.morpheusdata.core.util.ComputeUtility
 import com.morpheusdata.core.util.DateUtility
 import com.morpheusdata.model.Backup
 import com.morpheusdata.model.BackupResult
@@ -132,21 +133,21 @@ class OlvmSnapshotExecutionProvider implements BackupExecutionProvider {
             //execute snapshot
             def result = createSnapshotsForVm(vmId, cloud)
             if(result.success) {
-                def totalSize = result.snapshot.totalSize
+                def totalSize = result.snapshot.totalSize.toLong()
                 def targetArchive = []
                 def snapshotDisks = []
                 result.snapshot?.disks.each { disk ->
-                    def volumeSize = disk.provisionedSize
+                    def volumeSize = disk.provisionedSize.toLong()
                     targetArchive << result.snapshot.snapshotId
                     snapshotDisks << [
-                        volumeId:disk.id, snapshotId:result.snapshot.snapshotId, volumeSize:volumeSize, sizeInMb:(volumeSize * 1024),
+                        volumeId:disk.id, snapshotId:result.snapshot.snapshotId, volumeSize:volumeSize, sizeInMb:(volumeSize / ComputeUtility.ONE_MEGABYTE),
                         deviceName:disk.name
                     ]
                 }
                 rtn.data.backupResult.zoneId
                 rtn.data.backupResult.status = BackupStatusUtility.IN_PROGRESS
                 rtn.data.backupResult.resultArchive = targetArchive.join(",")
-                rtn.data.backupResult.sizeInMb = totalSize
+                rtn.data.backupResult.sizeInMb = totalSize / ComputeUtility.ONE_MEGABYTE
                 rtn.data.backupResult.setConfigProperty("snapshots", snapshotDisks)
                 rtn.data.backupResult.setConfigProperty("vmId", vmId)
                 rtn.data.updates = true
@@ -182,7 +183,7 @@ class OlvmSnapshotExecutionProvider implements BackupExecutionProvider {
             Boolean error = false
             snapshotIds?.each{ snapshotId ->
                 def opts = [vmId:server.externalId, snapshotId:snapshotId, cloud:cloud]
-                def snapshotResults = OlvmComputeUtility.getSnapshot(opts)
+                def snapshotResults = OlvmComputeUtility.getSnapshot(opts, morpheus)
                 if(snapshotResults.success == true) {
                     SnapshotContainer snapshot = snapshotResults.data
                     if(snapshot.snapshotStatus() == SnapshotStatus.OK) {
@@ -234,7 +235,7 @@ class OlvmSnapshotExecutionProvider implements BackupExecutionProvider {
     protected createSnapshotsForVm(vmId, Cloud cloud){
         log.debug("createSnapshotsForVm: ${vmId}")
         def rtn = [success:true]
-        rtn.snapshot << createSnapshot(vmId, cloud)
+        rtn.snapshot = createSnapshot(vmId, cloud)
         return rtn
     }
 
@@ -271,7 +272,7 @@ class OlvmSnapshotExecutionProvider implements BackupExecutionProvider {
         def closeConnection = false
         try {
             if (!connection) {
-                connection = OlvmComputeUtility.getConnection(cloud)
+                connection = OlvmComputeUtility.getConnection(cloud, morpheus)
                 closeConnection = true
             }
             log.debug("createSnapshot: ${vmId}")
@@ -288,12 +289,12 @@ class OlvmSnapshotExecutionProvider implements BackupExecutionProvider {
             def snapshotService = connection.systemService().vmsService().vmService(vmId).snapshotsService().snapshotService(rtn.snapshotId)
 
             for (disk in snapshotService.disksService().list().send().disks()) {
-                rtn.totalSize += disk.provisionedSize()
                 rtn.disks << [
                     id:disk.id(),
                     name:disk.name(),
                     provisionedSize:disk.provisionedSize()
                 ]
+                rtn.totalSize += disk.provisionedSize()
             }
 
             rtn.success = true
@@ -311,7 +312,7 @@ class OlvmSnapshotExecutionProvider implements BackupExecutionProvider {
         def closeConnection = false
         try {
             if (!connection) {
-                connection = OlvmComputeUtility.getConnection(cloud)
+                connection = OlvmComputeUtility.getConnection(cloud, morpheus)
                 closeConnection = true
             }
 

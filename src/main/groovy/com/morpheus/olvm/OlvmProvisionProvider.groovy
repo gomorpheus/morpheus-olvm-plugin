@@ -922,7 +922,6 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 
 	private ServiceResponse internalResizeServer(ComputeServer server, ResizeRequest resizeRequest, Map opts) {
 		def rtn = [success:false, supported:true]
-		def amazonOpts = [server:server]
 		Connection connection = opts.connection
 		def closeConnection = false
 		Cloud cloud = server.cloud
@@ -939,15 +938,39 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			}
 
 			if(statusResults.success == true) {
+				def saveVmProperties = false
+				def memory = server.maxMemory
+				def cores = server.maxCores
+				def coresPerSocket = server.coresPerSocket
+
 				//instance size
-				if (plan?.id != server.plan?.id) {
-					amazonOpts.flavorId = plan.externalId
-					log.info("Resizing Plan")
-					OlvmComputeUtility.updateVmProperties([connection:connection, vm:[id:server.externalId, memory:plan.maxMemory, cores:plan.maxCores, coresPerSocket:plan.coresPerSocket]])
+				if (plan?.id != server.plan?.id && !plan.customMaxMemory) {
 					server.plan = plan
-					server.maxMemory = plan.maxMemory
-					server.maxCores = plan.maxCores
-					server.setConfigProperty('maxMemory', plan.maxMemory)
+					memory = plan.maxMemory
+					cores = plan.maxCores
+					coresPerSocket = plan.coresPerSocket
+					saveVmProperties = true
+				}
+				else {
+					if (plan.id != server.plan.id) {
+						server.plan = plan
+						saveVmProperties = true
+					}
+					memory = resizeRequest.maxMemory
+					cores = resizeRequest.maxCores
+					coresPerSocket = opts.servicePlanOptions?.maxCores.toLong() ?: resizeRequest.coresPerSocket
+
+					if (memory != server.maxMemory || cores != server.maxCores || coresPerSocket != server.coresPerSocket)
+						saveVmProperties = true
+				}
+
+				if (saveVmProperties) {
+					log.info("Resizing Plan")
+					OlvmComputeUtility.updateVmProperties([connection:connection, vm:[id:server.externalId, memory:memory, maxCores:cores, coresPerSocket:coresPerSocket]])
+					server.maxMemory = memory
+					server.maxCores = cores * coresPerSocket
+					server.coresPerSocket = coresPerSocket
+					server.setConfigProperty('maxMemory', memory)
 					server = saveAndGet(server)
 				}
 

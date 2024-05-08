@@ -7,6 +7,7 @@ import com.morpheusdata.core.data.DataFilter
 import com.morpheusdata.core.data.DataQuery
 import com.morpheusdata.core.util.SyncList
 import com.morpheusdata.core.util.SyncTask
+import com.morpheusdata.model.Account
 import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.CloudPool
 import com.morpheusdata.model.projection.CloudPoolIdentity
@@ -73,7 +74,7 @@ class ClusterSync {
         def adds = []
         for (cloudItem in clusters) {
             adds << new CloudPool(
-                owner:[id:cloud.owner.id],
+                owner:new Account(id:cloud.defaultPoolSyncAccount ?: cloud.owner.id),
                 type:'cluster',
                 name:cloudItem.name(),
                 displayName:cloudItem.name(),
@@ -83,7 +84,8 @@ class ClusterSync {
                 refId:cloud.id,
                 cloud:[id:cloud.id],
                 category:"olvm.plugin.cluster.${cloud.id}",
-                code:"olvm.plugin.cluster.${cloud.id}.${cloudItem.id()}"
+                code:"olvm.plugin.cluster.${cloud.id}.${cloudItem.id()}",
+                active:cloud.defaultPoolSyncActive
             )
         }
         if (adds) {

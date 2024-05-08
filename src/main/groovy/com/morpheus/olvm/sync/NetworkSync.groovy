@@ -8,6 +8,7 @@ import com.morpheusdata.core.data.DataQuery
 import com.morpheusdata.core.util.NetworkUtility
 import com.morpheusdata.core.util.SyncList
 import com.morpheusdata.core.util.SyncTask
+import com.morpheusdata.model.Account
 import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.Network as NetworkModel
 import com.morpheusdata.model.projection.NetworkIdentityProjection
@@ -89,7 +90,7 @@ class NetworkSync {
             }
 
             def networkConfig = [
-                owner: cloud.owner,
+                owner: new Account(id:cloud.defaultNetworkSyncAccount ?: cloud.owner.id),
                 category:"olvm.plugin.netork.${cloud.id}",
                 name:cloudItem.name(),
                 displayName:cloudItem.name(),
@@ -102,7 +103,8 @@ class NetworkSync {
                 refId:cloud.id,
                 cloudPool:datacenter,
                 description:cidr ?: "An OLVM logical network",
-                active:network.statusPresent() ? network.status() == NetworkStatus.OPERATIONAL : true,
+                active:cloud.defaultNetworkSyncActive,
+                //active:network.statusPresent() ? network.status() == NetworkStatus.OPERATIONAL : true,
                 cidr:cidr,
                 dhcpServer:true,
                 cloud:cloud

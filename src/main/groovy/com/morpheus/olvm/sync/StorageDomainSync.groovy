@@ -84,7 +84,7 @@ class StorageDomainSync {
             def availableSpace = cloudItem.available()
             def committedSpace = cloudItem.committed()
             def datastoreConfig = [
-                owner       : new Account(id: cloud.owner.id),
+                owner       : new Account(id:cloud.defaultDatastoreSyncAccount ?: cloud.owner.id),
                 name        : cloudItem.name(),
                 externalId  : cloudItem.id(),
                 cloud       : cloud,
@@ -96,7 +96,8 @@ class StorageDomainSync {
                 drsEnabled  : false,
                 online      : cloudItem.externalStatus() == ExternalStatus.OK,
                 refType     : 'ComputeZone',
-                refId       : cloud.id
+                refId       : cloud.id,
+                active      : cloud.defaultDatastoreSyncActive
             ]
             Datastore add = new Datastore(datastoreConfig)
             add.assignedZonePools = [datacenter]

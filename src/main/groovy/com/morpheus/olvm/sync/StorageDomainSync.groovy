@@ -94,6 +94,7 @@ class StorageDomainSync {
                 type        : type,
                 category    : "olvm.plugin.datastore.${cloud.id}",
                 drsEnabled  : false,
+                active      : cloud.defaultDatastoreSyncActive,
                 online      : cloudItem.externalStatus() == ExternalStatus.OK,
                 refType     : 'ComputeZone',
                 refId       : cloud.id

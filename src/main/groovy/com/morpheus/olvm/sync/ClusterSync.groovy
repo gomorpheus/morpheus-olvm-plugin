@@ -75,6 +75,7 @@ class ClusterSync {
             adds << new CloudPool(
                 owner:[id:cloud.owner.id],
                 type:'cluster',
+                active: cloud.defaultPoolSyncActive,
                 name:cloudItem.name(),
                 displayName:cloudItem.name(),
                 description:cloudItem.descriptionPresent() ? cloudItem.description() : "A cluster named ${cloudItem.name()} version ${cloudItem.version().fullVersion()}",

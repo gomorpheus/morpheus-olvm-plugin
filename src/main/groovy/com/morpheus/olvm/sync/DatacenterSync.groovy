@@ -82,6 +82,7 @@ class DatacenterSync {
                 status:translateStatus(cloudItem.status()),
                 refType:'ComputeZone',
                 refId:cloud.id,
+                active: cloud.defaultPoolSyncActive,
                 cloud:[id:cloud.id],
                 category:"olvm.plugin.datacenter.${cloud.id}",
                 code:"olvm.plugin.datacenter.${cloud.id}.${cloudItem.id()}"

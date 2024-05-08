@@ -105,6 +105,7 @@ class NetworkSync {
                 active:network.statusPresent() ? network.status() == NetworkStatus.OPERATIONAL : true,
                 cidr:cidr,
                 dhcpServer:true,
+                active: cloud.defaultNetworkSyncActive,
                 cloud:cloud
             ]
             def add = new NetworkModel(networkConfig)

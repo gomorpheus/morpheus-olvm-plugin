@@ -904,7 +904,7 @@ class OlvmComputeUtility {
             def vm = vmService.get().send().vm()
 
             // find our disk attachment
-            def attachment = vm.diskAttachments().find { attachment ->
+            def attachment = connection.followLink(vm.diskAttachments()).find { attachment ->
                 return attachment.disk().id() == opts.volumeId
             }
 
@@ -914,8 +914,8 @@ class OlvmComputeUtility {
             rtn.success = true
         }
         catch (Throwable t) {
-            log.error("Unable to detach volume ${opts.volumeId}")
-            rtn.error = "Unable to detach volume ${opts.volumeId}"
+            log.error("Unable to detach volume ${opts.volumeId}: ${t.message}")
+            rtn.error = "Unable to detach volume ${opts.volumeId}: ${t.message}"
         }
         finally {
             if (closeConnection)

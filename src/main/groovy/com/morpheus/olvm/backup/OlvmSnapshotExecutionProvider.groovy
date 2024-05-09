@@ -178,7 +178,15 @@ class OlvmSnapshotExecutionProvider implements BackupExecutionProvider {
             ComputeServer server = morpheus.async.computeServer.get(backupResult.serverId).blockingGet()
             Cloud cloud = server?.cloud
 
-            def snapshotIds = backupResult?.configMap?.snapshots?.collect { it.snapshotId }.unique()
+            def snapshotIds = backupResult?.configMap?.snapshots?.collect { it.snapshotId }?.unique()
+
+            // if cannot find snapshotIds, just skip
+            if (!snapshotIds) {
+                rtn.data.updates = false
+                rtn.success = true
+                return rtn
+            }
+
             def completeCount = 0
             Boolean error = false
             snapshotIds?.each{ snapshotId ->

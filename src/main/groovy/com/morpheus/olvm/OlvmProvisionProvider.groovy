@@ -1043,7 +1043,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 				resizeRequest.volumesDelete.each { volume ->
 					log.info("Deleting volume : ${volume.externalId}")
 					def volumeId = volume.externalId
-					def detachResults = OlvmComputeUtility.detachVolume([volumeId:volumeId, vmId: server.externalId, connect:connection])
+					def detachResults = OlvmComputeUtility.detachVolume([volumeId:volumeId, vmId: server.externalId, connection:connection])
 					if (detachResults.success == true) {
 						OlvmComputeUtility.deleteVolume([volumeId:volumeId, connection:connection])
 						morpheus.async.storageVolume.remove([volume], server, true).blockingGet()

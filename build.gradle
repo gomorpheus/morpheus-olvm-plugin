@@ -90,12 +90,12 @@ jar {
 				'Morpheus-Name': 'OLVM Cloud Plugin',
 				'Morpheus-Organization': 'morpheus',
 				'Morpheus-Code': 'cloud.olvm',
-				'Morpheus-Description': 'TODO: Fill in the Plugin Description',
+				'Morpheus-Description': 'This is the official Morpheus plugin for interacting with Oracle\'s Linux Virtualization Manager. The plugin provides the ability to provision VMs, Docker Clusters, snapshots, etc within an OLVM environment.',
 				'Morpheus-Logo': 'assets/OLVM-140.svg',
 				'Morpheus-Logo-Dark': 'assets/OLVM-140.svg',
 				'Morpheus-Labels': 'Plugin',
 				'Morpheus-Repo': 'https://github.com/gomorpheus/morpheus-olvm-plugin',
-				'Morpheus-Min-Appliance-Version': "7.0.0"
+				'Morpheus-Min-Appliance-Version': "7.0.2"
 		)
 	}
 }

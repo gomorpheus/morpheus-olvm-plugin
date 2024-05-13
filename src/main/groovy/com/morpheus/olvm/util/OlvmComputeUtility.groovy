@@ -513,6 +513,59 @@ class OlvmComputeUtility {
         return rtn
     }
 
+    static createServerFromSnapshot(opts) {
+        log.debug("createServer opts: ${opts}")
+        def rtn = ServiceResponse.prepare()
+        Connection connection = opts.connection
+        def closeConnection = false
+        try {
+            if (!connection) {
+                connection getConnection(opts.cloud)
+                closeConnection = true
+            }
+            def imageRef = opts.imageRef
+
+            // grab api services we will need for vm creation
+            def vmsService = connection.systemService().vmsService()
+
+            // send vm create to api
+            def response = vmsService.add()
+                .vm(
+                    vm()
+                    .name(opts.name)
+                    .cluster(
+                        cluster()
+                        .id(opts.clusterRef)
+                    )
+                    .template(
+                        template()
+                        .id(imageRef)
+                    )
+                    .cpu(
+                        buildCpus(opts.workloadConfig)
+                    )
+                    .memory(opts.maxMemory)
+                    .snapshots(
+                        snapshot()
+                        .id(opts.restoreSnapshotId)
+                    )
+                )
+                .send()
+            def vmId = response.vm().id()
+            rtn.data = [vmId:vmId]
+            rtn.success = true
+        }
+        catch (Throwable t) {
+            rtn.error = "Failed to provision vm ${opts.name}: ${t.message}"
+            log.error("Failed to provision vm ${opts.name}: ${t.message}")
+        }
+        finally {
+            if (closeConnection)
+                connection.close()
+        }
+        return rtn
+    }
+
     static startVmWithCloudInit(opts) {
         def rtn
         Connection connection = opts.connection

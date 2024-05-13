@@ -1,6 +1,7 @@
 package com.morpheus.olvm
 
 import com.bertramlabs.plugins.karman.CloudFile
+import com.morpheus.olvm.backup.OlvmSnapshotBackupProvider
 import com.morpheus.olvm.util.OlvmComputeUtility
 import com.morpheusdata.PrepareHostResponse
 import com.morpheusdata.core.AbstractProvisionProvider
@@ -1700,7 +1701,22 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			//data volumes
 			if (runConfig.dataDisks)
 				runConfig.diskList = buildDataDiskList(runConfig.dataDisks)
-			def createResults = OlvmComputeUtility.createServer(runConfig)
+			def createResults
+
+			def backupSetId = opts.backupSetId
+			def cloneContainerId = opts.cloneContainerId
+			if(backupSetId && cloneContainerId) {
+				Map rootSnapshot
+				def snapshots = new OlvmSnapshotBackupProvider(plugin, morpheus).getSnapshotsForBackupResult(backupSetId, cloneContainerId)
+				log.debug("Snapshots: ${snapshots}")
+				if (snapshots) {
+					runConfig.restoreSnapshotId = snapshots.first().snapshotId
+					createResults = OlvmComputeUtility.createServerFromSnapshot(runConfig)
+				}
+			}
+			else {
+				createResults = OlvmComputeUtility.createServer(runConfig)
+			}
 			log.debug("create server: ${createResults}")
 			if (createResults.success == true && createResults.data.vmId) {
 				server.externalId = createResults.data.vmId

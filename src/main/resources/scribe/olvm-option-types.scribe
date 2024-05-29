@@ -12,6 +12,18 @@ resource "option-type" "olvm-datacenter" {
   optionSource = "olvmDatacenters"
 }
 
+resource "option-type" "olvm-cloud-datacenter" {
+  name = "cloudDatacenter"
+  code = "olvm.plugin.provision.cloudDatacenter"
+  category = "provisionType.olvm"
+  fieldName = "cloudDatacenterId"
+  fieldContext = "config"
+  fieldLabel = "Datacenter"
+  type = "hidden"
+  displayOrder = 1000,
+  optionSource = olvmCloudConfiguredDatacenter
+}
+
 resource "option-type" "olvm-cluster" {
   name = "cluster"
   code = "olvm.plugin.provision.cluster"

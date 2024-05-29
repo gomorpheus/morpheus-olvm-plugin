@@ -28,7 +28,8 @@ resource "compute-server-type" "olvm-linux" {
   computeType = "docker-host"
   optionTypes = [
     option-type.olvm-datacenter,
-    option-type.olvm-cluster
+    option-type.olvm-cluster,
+    option-type.olvm-cloud-datacenter
   ]
 }
 

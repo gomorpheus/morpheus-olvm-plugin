@@ -201,7 +201,7 @@ class VirtualMachineSync {
     private List<ServicePlan> getAllServicePlans() {
         if (!this.@servicePlans) {
             this.@servicePlans = []
-            morpheusContext.async.servicePlan.list(new DataQuery().withFilter('provisionTypeCode', 'olvm')).blockingSubscribe {
+            morpheusContext.async.servicePlan.list(new DataQuery().withFilter(new DataFilter<String>('provisionType.code', this.@plugin.getCloudProvider().getDefaultProvisionTypeCode()))).blockingSubscribe {
                 this.@servicePlans << it
             }
         }

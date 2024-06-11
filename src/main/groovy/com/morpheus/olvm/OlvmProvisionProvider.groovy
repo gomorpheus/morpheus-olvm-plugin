@@ -335,6 +335,16 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		return getStorageVolumeTypes()
 	}
 
+	/**
+	 * The name of the deployment service for this provider
+	 * valid options include: vmDeployTargetService, dockerDeployTargetService, kubernetesDeployTargetService, and cloudFoundryDeployTargetService
+	 * @return String
+	 */
+	@Override
+	String getDeployTargetService() {
+		return 'vmDeployTargetService'
+	}
+
 	private getStorageVolumeTypes() {
 		Collection<StorageVolumeType> volumeTypes = []
 

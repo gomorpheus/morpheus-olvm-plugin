@@ -153,7 +153,6 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			fieldContext:'config',
 			fieldLabel:'Datacenter',
 			required:true,
-			noBlank:false,
 			inputType:OptionType.InputType.SELECT,
 			displayOrder:100,
 			optionSource:'olvmDatacenters',

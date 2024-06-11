@@ -142,7 +142,9 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
 
     protected getCloudPools(args, type, cloud = null) {
         cloud = cloud ?: loadCloud(args)
+        args = args instanceof Object[] ? args.getAt(0) : args
         def rtn = []
+        def firstOptionDefault = args.defaultValue ? false : true
         def pools = morpheusContext.async.cloud.pool.search(
             new DataQuery().withFilters(
                 new DataFilter<String>('type', type),
@@ -150,8 +152,15 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
                 new DataFilter<String>('refId', cloud.id)
             )
         ).blockingGet()
+        def i = 0
         for (cloudPool in pools.items) {
-            rtn << [name:cloudPool.name, value:cloudPool.id]
+            def setAsDefault = false
+            if (firstOptionDefault && i == 0)
+                setAsDefault = true
+            else
+                setAsDefault = args?.defaultValue == cloudPool.id.toString() ? true : false
+            rtn << [name:cloudPool.name, value:cloudPool.id, isDefault:setAsDefault]
+            i = i++
         }
         return rtn
     }

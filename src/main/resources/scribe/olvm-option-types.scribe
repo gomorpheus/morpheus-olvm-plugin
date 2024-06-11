@@ -8,7 +8,7 @@ resource "option-type" "olvm-datacenter" {
   type = "select"
   displayOrder = 100
   required = true
-  noBlack = true
+  noBlank = true
   optionSource = "olvmDatacenters"
 }
 
@@ -34,6 +34,6 @@ resource "option-type" "olvm-cluster" {
   type = "select"
   displayOrder = 110
   required = true
-  noBlack = true
+  noBlank = true
   optionSource = "olvmClusters"
 }

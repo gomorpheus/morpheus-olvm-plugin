@@ -4,8 +4,8 @@ resource "virtual-image" "olvm-image-morpheus-debian-11" {
 	category = "olvm.plugin.image.morpheus.debian"
 	name = "Morpheus Debian 11"
 	imageType = "qcow2"
-	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/debian/debian-11/morpheus-debian-11-amd64-20240304.qcow2"
-	imagePath = "olvm/debian/debian-11"
+	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/qemu/20240604/debian-11/morpheus-debian-11-amd64-20240604.qcow2"
+	imagePath = "qemu/20240604/debian-11"
 	isCloudInit = true
 	systemImage = true
 	installAgent = true

@@ -1,4 +1,4 @@
-// centos 7.9
+// centos 7.9 - EOL 30 Jun 2024
 resource "virtual-image" "olvm-image-morpheus-centos-7_9" {
 	code = "olvm.plugin.image.morpheus.centos.7.9.amd64"
 	category = "olvm.plugin.image.morpheus.centos"
@@ -60,8 +60,8 @@ resource "instance-type-layout" "olvm-centos-7_9-single" {
 	hasAutoScale = true
 	portCount = 1
 	serverType = "vm"
-	enabled = true
-	creatable = true
+	enabled = false
+	creatable = false
 	supportsConvertToManaged = true
 	containers = [
 		workload-type-set.olvm-centos-7_9-set
@@ -74,6 +74,91 @@ resource "scale-action" "olvm-centos-7_9-single" {
 	code = "olvm-centos-7.9-single"
 	scaleType = "action"
 	layout = instance-type-layout.olvm-centos-7_9-single
+	upAction {
+		code = "generic-add-node"
+	}
+	downAction {
+		code = "generic-remove-node"
+	}
+}
+
+// CentOS 9 Stream
+
+resource "virtual-image" "olvm-image-morpheus-centos-9-stream" {
+	code = "olvm.plugin.image.morpheus.centos.9.stream.amd64"
+	category = "olvm.plugin.image.morpheus.centos"
+	name = "Morpheus CentOS 9 Stream"
+	imageType = "qcow2"
+	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/qemu/20240604/centos-9-stream/morpheus-centos-9-stream-x86_64-20240604.qcow2"
+	imagePath = "qemu/20240604/centos-9-stream"
+	isCloudInit = true
+	systemImage = true
+	installAgent = true
+	osType {
+		code = "cent.9.64"
+	}
+	zoneType = "olvm"
+}
+
+resource "workload-type" "olvm-centos-9-stream" {
+	code = "olvm-plugin-centos-9-stream"
+	shortName = "centos"
+	name = "CentOS 9 Stream"
+	ports = [22]
+	containerVersion = "9 Stream"
+	entryPoint = ""
+	mountLogs = "/var/log"
+	statTypeCode = "vm"
+	logTypeCode = "centos"
+	showServerLogs = true
+	category = "centos"
+	cloneType = "centos"
+	priorityOrder = 0
+	serverType = "vm"
+	providerType = "olvm"
+	containerPorts = [{code = "centos.22"}]
+	actions = [{code = "generic-remove-node"}]
+	checkTypeCode = "containerCheck"
+	virtualImage = virtual-image.olvm-image-morpheus-centos-9-stream
+	provisionType = "olvm-provision-standard"
+	backupType = "olvmSnapshot"
+}
+
+resource "workload-type-set" "olvm-centos-9-stream-set" {
+	code = "olvm-centos-9-stream-set"
+	containerType = workload-type.olvm-centos-9-stream
+	priorityOrder = 0
+	dynamicCount = true
+	containerCount = 1
+}
+
+resource "instance-type-layout" "olvm-centos-9-stream-single" {
+	code = "olvm-centos-9-stream-single"
+	name = "CentOS 9 Stream VM"
+	sortOrder = 99
+	instanceVersion = "9-stream"
+	description = "This will provision a single vm"
+	instanceType {
+		code = "centos"
+	}
+	serverCount = 1
+	hasAutoScale = true
+	portCount = 1
+	serverType = "vm"
+	enabled = true
+	creatable = true
+	supportsConvertToManaged = true
+	containers = [
+		workload-type-set.olvm-centos-9-stream-set
+	]
+	actions = [{code = "generic-add-node"}]
+	provisionType = "olvm-provision-standard"
+}
+
+resource "scale-action" "olvm-centos-9-stream-single" {
+	code = "olvm-centos-9-stream-single"
+	scaleType = "action"
+	layout = instance-type-layout.olvm-centos-9-stream-single
 	upAction {
 		code = "generic-add-node"
 	}

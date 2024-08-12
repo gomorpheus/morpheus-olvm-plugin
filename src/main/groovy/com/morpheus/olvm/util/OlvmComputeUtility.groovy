@@ -2,6 +2,7 @@ package com.morpheus.olvm.util
 
 import com.bertramlabs.plugins.karman.CloudFile
 import com.morpheusdata.core.MorpheusContext
+import com.morpheusdata.core.util.HttpApiClient
 import com.morpheusdata.core.util.image.Qcow2InputStream
 import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.ComputeServerInterface
@@ -12,7 +13,6 @@ import org.ovirt.engine.sdk4.builders.CpuBuilder
 import org.ovirt.engine.sdk4.builders.NicBuilder
 import org.ovirt.engine.sdk4.internal.containers.ImageTransferContainer
 import org.ovirt.engine.sdk4.internal.containers.SnapshotContainer
-import org.ovirt.engine.sdk4.services.SystemService
 import org.ovirt.engine.sdk4.types.DiskFormat
 import org.ovirt.engine.sdk4.types.DiskInterface
 import org.ovirt.engine.sdk4.types.DiskStatus
@@ -53,80 +53,244 @@ class OlvmComputeUtility {
 
     static listDatacenters(opts) {
         ServiceResponse rtn = ServiceResponse.prepare()
+        HttpApiClient client = null
         try {
-            Connection connection = opts.connection
+            Map connection = opts.connection
             if (!connection) {
-                connection = getConnection(opts.cloud)
+                connection = getToken(opts.cloud)
             }
-            rtn.data = [
-                connection : connection,
-                datacenters: connection.systemService().dataCentersService().list().send().dataCenters()
-            ]
-            rtn.success = true
+            def headers = getAuthenticatedBaseHeaders(connection)
+            client = new HttpApiClient()
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def resp = client.callJsonApi(
+                connection.apiUrl,
+                '/ovirt-engine/api/datacenters',
+                reqOptions,
+                'GET'
+            )
+            if (resp.success) {
+                rtn.data = [
+                    connection:connection,
+                    datacenters:resp.data['data_center']
+                ]
+                rtn.success = true
+            }
+            else {
+                log.error("Unable to get datacenters: ${extractErrorMessage(resp.data)}")
+                rtn.error = "Unable to get datacenters: ${extractErrorMessage(resp.data)}"
+            }
         }
         catch (Throwable t) {
             log.error("Unable to get datacenters: ${t.message}", t)
             rtn.error = "Unable to get datacenters: ${t.message}"
+        }
+        finally {
+            client.shutdownClient()
         }
         return rtn
     }
 
     static listClusters(opts) {
         ServiceResponse rtn = ServiceResponse.prepare()
+        HttpApiClient client = null
         try {
-            Connection connection = opts.connection
+            def connection = opts.connection
             if (!connection) {
-                connection = getConnection(opts.cloud)
+                connection = getToken(opts.cloud)
             }
-            rtn.data = [
-                connection : connection,
-                clusters: connection.systemService().clustersService().list().send().clusters()
-            ]
-            rtn.success = true
+
+            def headers = getAuthenticatedBaseHeaders(connection)
+            client = new HttpApiClient()
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                '/ovirt-engine/api/clusters',
+                reqOptions,
+                'GET'
+            )
+
+            if (response.success) {
+                rtn.data = [
+                    connection:connection,
+                    clusters:response.data.cluster
+                ]
+                rtn.success = true
+            }
+            else {
+                log.error("Unable to get clusters: ${extractErrorMessage(response.data)}")
+                rtn.error = "Unable to get clusters: ${extractErrorMessage(response.data)}"
+            }
         }
         catch (Throwable t) {
             log.error("Unable to get clusters: ${t.message}", t)
             rtn.error = "Unable to get clusters: ${t.message}"
+        }
+        finally {
+            client.shutdownClient()
+        }
+        return rtn
+    }
+
+    static listTemplates(opts) {
+        ServiceResponse rtn = ServiceResponse.prepare()
+        HttpApiClient client = null
+        try {
+            Map connection = opts.connection
+            if (!connection) {
+                connection = getToken(opts.cloud)
+            }
+
+            def headers = getAuthenticatedBaseHeaders(connection)
+            client = new HttpApiClient()
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                '/ovirt-engine/api/templates',
+                reqOptions,
+                'GET'
+            )
+
+            if (response.success) {
+                rtn.data = [
+                    connection: connection,
+                    templates : response.data['template']
+                ]
+                rtn.success = true
+            }
+            else {
+                log.error("Unable to get templates: ${extractErrorMessage(response.data)}")
+                rtn.error = "Unable to get templates: ${extractErrorMessage(response.data)}"
+            }
+        }
+        catch (Throwable t) {
+            log.error("Unable to get templates: ${t.message}", t)
+            rtn.error = "Unable to get templates: ${t.message}"
+        }
+        finally {
+            if (client)
+                client.shutdownClient()
+        }
+        return rtn
+    }
+
+    static listVirtualMachines(opts) {
+        ServiceResponse rtn = ServiceResponse.prepare()
+        HttpApiClient client = null
+        try {
+            Map connection = opts.connection
+            if (!connection) {
+                connection = getToken(opts.cloud)
+            }
+
+            def headers = getAuthenticatedBaseHeaders(connection)
+            client = new HttpApiClient()
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                '/ovirt-engine/api/vms',
+                reqOptions,
+                'GET'
+            )
+
+            if (response.success) {
+                rtn.data = [
+                    connection: connection,
+                    vms: response.data['vm']
+                ]
+                rtn.success = true
+            }
+            else {
+                log.error("Unable to get virtual machines: ${extractErrorMessage(response.data)}")
+                rtn.error = "Unable to get virtual machines: ${extractErrorMessage(response.data)}"
+            }
+        }
+        catch (Throwable t) {
+            log.error("Unable to get virtual machines: ${t.message}", t)
+            rtn.error = "Unable to get virtual machines: ${t.message}"
+        }
+        finally {
+            if (client)
+                client.shutdownClient()
         }
         return rtn
     }
 
     static listNetworks(opts) {
         ServiceResponse rtn = ServiceResponse.prepare()
+        HttpApiClient client = null
         try {
-            Connection connection = opts.connection
+            Map connection = opts.connection
             if (!connection) {
-                connection = getConnection(opts.cloud)
+                connection = getToken(opts.cloud)
             }
-            rtn.data = [
-                connection : connection,
-                profiles: connection.systemService().vnicProfilesService().list().send().profiles()
-            ]
-            rtn.success = true
+            def headers = getAuthenticatedBaseHeaders(connection)
+            client = new HttpApiClient()
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                '/ovirt-engine/api/networks',
+                reqOptions,
+                'GET'
+            )
+
+            if (response.success) {
+                rtn.data = [
+                    connection: connection,
+                    profiles  : response.data['network']
+                ]
+                rtn.success = true
+            }
+            else {
+                log.error("Unable to get networks: ${extractErrorMessage(response.data)}")
+                rtn.error = "Unable to get networks: ${extractErrorMessage(response.data)}"
+            }
         }
         catch (Throwable t) {
             log.error("Unable to get networks: ${t.message}", t)
             rtn.error = "Unable to get networks: ${t.message}"
+        }
+        finally {
+            client.shutdownClient()
         }
         return rtn
     }
 
     static listStorageDomains(opts) {
         ServiceResponse rtn = ServiceResponse.prepare()
+        HttpApiClient client = null
         try {
-            Connection connection = opts.connection
+            def connection = opts.connection
             if (!connection) {
-                connection = getConnection(opts.cloud)
+                connection = getToken(opts.cloud)
             }
-            rtn.data = [
-                connection : connection,
-                storageDomains: connection.systemService().storageDomainsService().list().send().storageDomains()
-            ]
-            rtn.success = true
+
+            def headers = getAuthenticatedBaseHeaders(connection)
+            client = new HttpApiClient()
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                '/ovirt-engine/api/storagedomains',
+                reqOptions,
+                'GET'
+            )
+            if (response.success) {
+                rtn.data = [
+                    connection:connection,
+                    storageDomains:response.data['storage_domain']
+                ]
+                rtn.success = true
+            }
+            else {
+                log.error("Unable to get clusters: ${extractErrorMessage(response.data)}")
+                rtn.error = "Unable to get clusters: ${extractErrorMessage(response.data)}"
+            }
         }
         catch (Throwable t) {
             log.error("Unable to get storage domains: ${t.message}", t)
             rtn.error = "Unable to get storage domains: ${t.message}"
+        }
+        finally {
+            client.shutdownClient()
         }
         return rtn
     }
@@ -734,64 +898,104 @@ class OlvmComputeUtility {
 
     static getServerDetail(opts) {
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        HttpApiClient client = null
         try {
+            Map connection = opts.connection
             if (!connection) {
-                connection = getConnection(opts.cloud)
-                closeConnection = true
+                connection = getToken(opts.cloud)
             }
             def externalId = opts.server?.externalId ?: opts.serverId
             if(externalId) {
-                def vmService = connection.systemService().vmsService().vmService(externalId)
-                def vm = vmService.get().send().vm()
+                def headers = getAuthenticatedBaseHeaders(connection)
+                client = new HttpApiClient()
+                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+                def response = client.callJsonApi(
+                    connection.apiUrl,
+                    "/ovirt-engine/api/vms/${externalId}".toString(),
+                    reqOptions,
+                    'GET'
+                )
+
+                if (response.success) {
+                    rtn.data = [
+                        connection: connection,
+                    ]
+                    rtn.success = true
+                }
+                def vm = response.data
                 def vmMap = [
-                    name:vm.name(),
-                    hostname:vm.fqdn(),
-                    id:vm.id(),
-                    clusterId:vm.cluster()?.id(),
-                    memory:vm.memory(),
-                    cores:vm.cpu().topology().cores() * vm.cpu().topology().sockets(),
-                    sockets:vm.cpu().topology().sockets(),
+                    name:vm.name,
+                    hostname:vm.fqdn,
+                    id:vm.id,
+                    clusterId:vm.cluster?.id,
+                    memory:vm.memory?.toLong(),
+                    cores:vm.cpu.topology.cores.toLong() * vm.cpu.topology.sockets.toLong(),
+                    sockets:vm.cpu.topology.sockets.toLong(),
                     ipV4:[],
                     ipV6:[],
-                    status:vm.status().toString(),
+                    status:vm.status,
                     disks:[],
                     nics:[]
                 ]
 
                 // add ip address to vm details
-                def devices = connection.followLink(vm.reportedDevices())
+                response = client.callJsonApi(
+                    connection.apiUrl,
+                    "/ovirt-engine/api/vms/${externalId}/reporteddevices".toString(),
+                    reqOptions,
+                    'GET'
+                )
+                def devices = response.data['reported_device']
                 for (device in devices) {
-                    for(ip in device.ips()) {
-                        if (ip.version() == IpVersion.V4) {
-                            vmMap.ipV4 << ip.address()
+                    for(ip in device.ips?.ip) {
+                        if (ip.version == 'v4') {
+                            vmMap.ipV4 << ip.address
                         }
                         else {
-                            vmMap.ipV6 << ip.address()
+                            vmMap.ipV6 << ip.address
                         }
                     }
                 }
 
                 // add disks to vm details
-                for (diskAttachment in vmService.diskAttachmentsService().list().send().attachments()) {
-                    def disk = connection.followLink(diskAttachment.disk())
+                response = client.callJsonApi(
+                    connection.apiUrl,
+                    "/ovirt-engine/api/vms/${externalId}/diskattachments".toString(),
+                    reqOptions,
+                    'GET'
+                )
+                for (diskAttachment in response.data['disk_attachment']) {
+                    def disk = client.callJsonApi(
+                        connection.apiUrl,
+                        diskAttachment.disk.href,
+                        reqOptions,
+                        'GET'
+                    ).data
+
                     vmMap.disks << [
-                        name:disk.name(),
-                        id:disk.id(),
-                        status:disk.status().toString(),
-                        size:disk.provisionedSize(),
-                        bootable:diskAttachment.bootable()
+                        name:disk.name,
+                        id:disk.id,
+                        status:disk.status,
+                        size:disk['provisioned_size']?.toLong(),
+                        bootable:diskAttachment.bootable.toBoolean(),
+                        logicalName:diskAttachment['logical_name'],
+                        interface:diskAttachment.interface,
+                        active:diskAttachment.active.toBoolean()
                     ]
                 }
 
                 // add nics to vm details
-                for (nic in vmService.nicsService().list().send().nics()) {
-                    def cloudNic = connection.followLink(nic)
+                def vmNics = client.callJsonApi(
+                    connection.apiUrl,
+                    "/ovirt-engine/api/vms/${externalId}/nics".toString(),
+                    reqOptions,
+                    'GET'
+                ).data.nic
+                for (nic in vmNics) {
                     vmMap.nics << [
-                        name:cloudNic.name(),
-                        id:cloudNic.id(),
-                        networkId:cloudNic.vnicProfile().id()
+                        name:nic.name,
+                        id:nic.id,
+                        networkId:nic['vnic_profile'].id
                     ]
                 }
                 rtn.data = vmMap
@@ -802,8 +1006,8 @@ class OlvmComputeUtility {
             log.error("getServerDetail error: ${t}", t)
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            if (client)
+                client.shutdownClient()
         }
         return rtn
     }
@@ -1300,12 +1504,28 @@ class OlvmComputeUtility {
         def rtn = ServiceResponse.prepare()
         rtn.data = [invalidLogin:false]
 
-        Connection connection = getConnection(cloud)
-        SystemService systemService = connection.systemService()
-        def systemInfo = systemService.get().send().api()
-        if (systemInfo.summaryPresent()) {
-            rtn.success = true
-            rtn.data.connection = connection
+        Map connection = getToken(cloud)
+        HttpApiClient client = null
+        try {
+            client = new HttpApiClient()
+            def headers = getAuthenticatedBaseHeaders(connection)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def resp = client.callJsonApi(
+                connection.apiUrl,
+                '/ovirt-engine/api',
+                reqOptions,
+                'GET'
+            )
+            if (resp.success) {
+                rtn.success = true
+                rtn.data.connection = connection
+            } else {
+                log.error("Failed testConnection(): ${extractErrorMessage(resp.data)}")
+                rtn.error = extractErrorMessage(resp.data)
+            }
+        }
+        finally {
+            client.shutdownClient()
         }
         return rtn
     }
@@ -1394,6 +1614,41 @@ class OlvmComputeUtility {
         return code
     }
 
+    static getToken(Cloud cloud, MorpheusContext ctx = null) {
+        if (!cloud.accountCredentialLoaded && ctx) {
+            cloud.accountCredentialData = ctx.async.cloud.loadCredentials(cloud.id).blockingGet()?.data
+            cloud.accountCredentialLoaded = true
+        }
+
+        def config = [
+            endpointUrl:cloud.serviceUrl,
+            serviceUsername:cloud.accountCredentialData?.username ?: cloud.serviceUsername,
+            servicePassword:cloud.accountCredentialData?.password ?: cloud.servicePassword
+        ]
+
+        if (cloud.apiProxy) {
+            config.apiProxy = cloud.apiProxy
+        }
+
+        HttpApiClient client = new HttpApiClient()
+        def headers = ['Content-Type':'application/x-www-form-urlencoded', 'Accept':'application/json']
+        def body = "grant_type=password&scope=ovirt-app-api&username=${URLEncoder.encode(config.serviceUsername, 'UTF-8')}&password=${URLEncoder.encode(config.servicePassword, 'UTF-8')}".toString()
+        HttpApiClient.RequestOptions reqOptions = new HttpApiClient.RequestOptions(headers:headers, body:body, ignoreSSL:true)
+        def resp = client.callJsonApi(
+            extractRootURL(config.endpointUrl),
+            '/ovirt-engine/sso/oauth/token',
+            reqOptions,
+            'POST'
+        )
+
+        if (resp.success) {
+            return [apiUrl:extractRootURL(config.endpointUrl), token:resp.data['access_token']]
+        }
+        else {
+            throw new RuntimeException("Failed to authenticate to OLVM environment: ${resp.data?.fault?.message} - ${resp.data?.fault?.detail}")
+        }
+    }
+
     static getConnection(Cloud cloud, MorpheusContext ctx = null) {
         if (!cloud.accountCredentialLoaded && ctx) {
             cloud.accountCredentialData = ctx.async.cloud.loadCredentials(cloud.id).blockingGet()?.data
@@ -1468,6 +1723,23 @@ class OlvmComputeUtility {
             }
         })
         proxySelectorConfigured = false
+    }
+
+    private static getAuthenticatedBaseHeaders(String token) {
+        return [Authorization:"Bearer ${token}".toString(), Accept:'application/json']
+    }
+
+    private static getAuthenticatedBaseHeaders(Map connection) {
+        return getAuthenticatedBaseHeaders(connection.token)
+    }
+
+    private static String extractErrorMessage(resp) {
+        return "${resp?.fault?.message} - ${resp?.fault?.detail}".toString()
+    }
+
+    private static String extractRootURL(String urlString) {
+        URL url = new URL(urlString)
+        return "${url.protocol}://${url.host}".toString()
     }
 
     public static final List BLOCK_DEVICE_LIST = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l']

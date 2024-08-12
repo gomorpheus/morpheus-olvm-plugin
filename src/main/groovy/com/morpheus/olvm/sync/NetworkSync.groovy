@@ -15,18 +15,15 @@ import com.morpheusdata.model.projection.NetworkIdentityProjection
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
 import io.reactivex.rxjava3.core.Observable
-import org.ovirt.engine.sdk4.Connection
-import org.ovirt.engine.sdk4.internal.containers.VnicProfileContainer
-import org.ovirt.engine.sdk4.types.NetworkStatus
 
 @Slf4j
 class NetworkSync {
     private Cloud cloud
     private MorpheusContext morpheusContext
     private OlvmCloudPlugin plugin
-    private Connection connection
+    private Map connection
 
-    public NetworkSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Connection connection = null) {
+    public NetworkSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Map connection = null) {
         super()
         this.@cloud = cloud
         this.@plugin = plugin
@@ -37,8 +34,8 @@ class NetworkSync {
     def execute() {
         log.info("Starting OLVM network sync for cloud ${cloud.name})")
         try {
-            if (!connection)
-                connection = OlvmComputeUtility.getConnection(cloud)
+            if (!this.@connection)
+                this.@connection = OlvmComputeUtility.getToken(cloud)
 
             def olvmNetworks = OlvmComputeUtility.listNetworks([connection:connection]).data.profiles
             Observable<NetworkIdentityProjection> domainRecords = morpheusContext.async.network.listIdentityProjections(
@@ -47,9 +44,9 @@ class NetworkSync {
                     new DataFilter<String>('refId', cloud.id)
                 )
             )
-            SyncTask<NetworkIdentityProjection,VnicProfileContainer,NetworkModel> syncTask = new SyncTask<>(domainRecords, olvmNetworks)
+            SyncTask<NetworkIdentityProjection,Map,NetworkModel> syncTask = new SyncTask<>(domainRecords, olvmNetworks)
             syncTask.addMatchFunction { domainObject, cloudObject ->
-                return domainObject.externalId == cloudObject.id()
+                return domainObject.externalId == cloudObject.id
             }.onDelete { removeItems ->
                 removeNetworks(removeItems)
             }.onUpdate { updateItems ->
@@ -72,37 +69,36 @@ class NetworkSync {
         morpheusContext.async.network.bulkRemove(removeItems).blockingGet()
     }
 
-    protected addMissingNetworks(List<VnicProfileContainer > addItems) {
+    protected addMissingNetworks(List<Map> addItems) {
         def adds = []
         for (cloudItem in addItems) {
             def networkType =
                 morpheusContext.async.network.type.search(new DataQuery().withFilter(new DataFilter<String>('code', 'olvm-logical-network'))).blockingGet().items?.first()
 
-            def network = cloudItem.network()
-            def cidr = network?.ip() ? NetworkUtility.networkToCidr(network?.ip().address(), network?.ip().netmask()) : '0.0.0.0/1'
+            def cidr = cloudItem.ip ? NetworkUtility.networkToCidr(cloudItem.ip, cloudItem.netMask) : '0.0.0.0/1'
 
             // Check to see if network belongs to a data center
             def datacenter
-            if (network?.dataCenterPresent()) {
+            if (cloudItem['data_center']) {
                 def datacenters =
-                    morpheusContext.async.cloud.pool.search(new DataQuery().withFilter(new DataFilter<String>('externalId', network.dataCenter().id()))).blockingGet()
+                    morpheusContext.async.cloud.pool.search(new DataQuery().withFilter(new DataFilter<String>('externalId', cloudItem['data_center'].id))).blockingGet()
                 datacenter = datacenters.items?.first()
             }
 
             def networkConfig = [
                 owner: new Account(id:cloud.defaultNetworkSyncAccount ?: cloud.owner.id),
                 category:"olvm.plugin.netork.${cloud.id}",
-                name:cloudItem.name(),
-                displayName:cloudItem.name(),
-                code:"olvm.plugin.network.${cloud.id}.${cloudItem.id()}",
-                uniqueId:cloudItem.id(),
-                externalId:cloudItem.id(),
+                name:cloudItem.name,
+                displayName:cloudItem.name,
+                code:"olvm.plugin.network.${cloud.id}.${cloudItem.id}",
+                uniqueId:cloudItem.id,
+                externalId:cloudItem.id,
                 externalType: 'subnet',
                 type: networkType,
                 refType:'ComputeZone',
                 refId:cloud.id,
                 cloudPool:datacenter,
-                description:cidr ?: "An OLVM logical network",
+                description:cloudItem.description,
                 active:cloud.defaultNetworkSyncActive,
                 //active:network.statusPresent() ? network.status() == NetworkStatus.OPERATIONAL : true,
                 cidr:cidr,
@@ -117,32 +113,26 @@ class NetworkSync {
         }
     }
 
-    protected updateMatchedNetworks(List<SyncList.UpdateItem<NetworkModel,VnicProfileContainer>> updateItems) {
+    protected updateMatchedNetworks(List<SyncList.UpdateItem<NetworkModel,Map>> updateItems) {
         def updates = []
         for (updateItem in updateItems) {
             def masterItem = updateItem.masterItem
             def existingItem = updateItem.existingItem
             def save = false
-            def network = masterItem.network()
-            def cidr = network.ipPresent() ? NetworkUtility.networkToCidr(network.ip().address(), network.ip().netmask()) : '0.0.0.0/1'
-            def description = cidr ?: "An OLVM logical network"
-            def active = network.statusPresent() ? network.status() == NetworkStatus.OPERATIONAL : true
+            def cidr = masterItem.ip ? NetworkUtility.networkToCidr(masterItem.ip, masterItem.netmask) : '0.0.0.0/1'
+            def description = masterItem.description
 
-            if (existingItem.name != masterItem.name()) {
-                existingItem.name = masterItem.name()
-                existingItem.displayName = masterItem.name()
+            if (existingItem.name != masterItem.name) {
+                existingItem.name = masterItem.name
+                existingItem.displayName = masterItem.name
                 save = true
             }
-            if (existingItem.displayName != masterItem.name()) {
-                existingItem.displayName = masterItem.name()
+            if (existingItem.displayName != masterItem.name) {
+                existingItem.displayName = masterItem.name
                 save = true
             }
             if (existingItem.cidr != cidr) {
                 existingItem.cidr = cidr
-                save = true
-            }
-            if (existingItem.active != active) {
-                existingItem.active = active
                 save = true
             }
             if (existingItem.description != description) {

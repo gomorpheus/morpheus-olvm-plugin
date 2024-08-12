@@ -11,27 +11,22 @@ import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.CloudPool
 import com.morpheusdata.model.ComputeServer
 import com.morpheusdata.model.ComputeServerType
-import com.morpheusdata.model.OsType
 import com.morpheusdata.model.ServicePlan
 import com.morpheusdata.model.projection.ComputeServerIdentityProjection
-import com.morpheusdata.model.projection.ServicePlanIdentityProjection
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
 import io.reactivex.rxjava3.core.Observable
-import org.ovirt.engine.sdk4.Connection
-import org.ovirt.engine.sdk4.internal.containers.VmContainer
-import org.ovirt.engine.sdk4.types.VmStatus
 
 @Slf4j
 class VirtualMachineSync {
     private Cloud cloud
     private MorpheusContext morpheusContext
     private OlvmCloudPlugin plugin
-    private Connection connection
+    private Map connection
     private Map<String, ComputeServerType> computeServerTypes
     private List<ServicePlan> servicePlans
 
-    public VirtualMachineSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Connection connection = null) {
+    public VirtualMachineSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Map connection = null) {
         super()
         this.@cloud = cloud
         this.@plugin = plugin
@@ -46,15 +41,15 @@ class VirtualMachineSync {
                 if (!connection)
                     connection = OlvmComputeUtility.getConnection(cloud)
 
-                def olvmVms = connection.systemService().vmsService().list().send().vms()
+                def olvmVms = OlvmComputeUtility.listVirtualMachines([connection:connection]).data.vms
                 Observable<ComputeServerIdentityProjection> domainRecords = morpheusContext.async.computeServer.listIdentityProjections(cloud.id, null)
 
-                SyncTask<ComputeServerIdentityProjection, VmContainer, ComputeServer> syncTask = new SyncTask<>(domainRecords, olvmVms)
-                syncTask.addMatchFunction { ComputeServerIdentityProjection existingItem, VmContainer cloudItem ->
-                    return existingItem.externalId == cloudItem.id()
+                SyncTask<ComputeServerIdentityProjection, Map, ComputeServer> syncTask = new SyncTask<>(domainRecords, olvmVms)
+                syncTask.addMatchFunction { ComputeServerIdentityProjection existingItem, Map cloudItem ->
+                    return existingItem.externalId == cloudItem.id
                 }.onDelete { removeItems ->
                     removeVirtualMachines(removeItems)
-                }.onUpdate { List<SyncTask.UpdateItem<ComputeServer, VmContainer>> updateItems ->
+                }.onUpdate { List<SyncTask.UpdateItem<ComputeServer, Map>> updateItems ->
                     updateMatchedVirtualMachines(updateItems)
                 }.onAdd { itemsToAdd ->
                     addMissingVirtualMachines(itemsToAdd)
@@ -69,24 +64,24 @@ class VirtualMachineSync {
             return ServiceResponse.success()
         }
         catch (Throwable t) {
-            log.error("Failed to sync OLVM clusters: ${t.message}", t)
+            log.error("Failed to sync OLVM virtual machines: ${t.message}", t)
         }
     }
 
-    def addMissingVirtualMachines(List<VmContainer> vms) {
+    def addMissingVirtualMachines(List<Map> vms) {
         ServicePlan fallbackPlan = allServicePlans.find {it.code == 'olvm.plugin.custom'}
         List<ComputeServer> adds = []
         for (vm in vms) {
-            def vmDetails = OlvmComputeUtility.getServerDetail([connection:connection, serverId:vm.id()]).data
-            def servicePlan = SyncUtils.findServicePlanBySizing(allServicePlans, vmDetails.memory.toLong(), vmDetails.cores.toLong(), vmDetails.sockets.toLong(), fallbackPlan)
+            def vmDetails = OlvmComputeUtility.getServerDetail([connection:connection, serverId:vm.id]).data
+            def servicePlan = SyncUtils.findServicePlanBySizing(allServicePlans, vmDetails.memory, vmDetails.cores, vmDetails.sockets, fallbackPlan)
             def zonePool = morpheusContext.async.cloud.pool.find(new DataQuery().withFilter('externalId', vmDetails.clusterId)).blockingGet()
-            def osType = vm.os().type()
+            def osType = vm.os?.type
             def primaryIp = vmDetails.ipV4 ? vmDetails.ipV4.first() : ''
             ComputeServer add = new ComputeServer(
                 account: cloud.account,
-                externalId: vm.id(),
+                externalId: vm.id,
                 resourcePool: zonePool ? new CloudPool(id: zonePool.id) : null,
-                name: vm.name(),
+                name: vm.name,
                 externalIp: primaryIp,
                 internalIp: primaryIp,
                 sshHost: primaryIp,
@@ -99,7 +94,7 @@ class VirtualMachineSync {
                 discovered: true,
                 managed: false,
                 status: 'provisioned',
-                powerState: vm.status() == VmStatus.UP ? ComputeServer.PowerState.on : ComputeServer.PowerState.off,
+                powerState: vm.status == 'up' ? ComputeServer.PowerState.on : ComputeServer.PowerState.off,
                 osType: osType,
                 serverOs: morpheusContext.async.osType.find(new DataQuery().withFilters(new DataFilter<String>('code', OlvmComputeUtility.getOsTypeCode(osType)))).blockingGet(),
                 computeServerType: allComputeServerTypes[osType == 'windows' ? 'olvmWindowsVm' : 'olvmUnmanaged'],
@@ -120,17 +115,17 @@ class VirtualMachineSync {
         def saves = []
         for(update in updateItems) {
             ComputeServer currentServer = update.existingItem
-            VmContainer cloudItem = update.masterItem
+            Map cloudItem = update.masterItem
 
             if (currentServer.status != 'provisioning') {
                 try {
-                    def vmDetails = OlvmComputeUtility.getServerDetail([connection:connection, serverId:cloudItem.id()]).data
+                    def vmDetails = OlvmComputeUtility.getServerDetail([connection:connection, serverId:cloudItem.id]).data
                     def save = false
-                    def powerState = cloudItem.status() == VmStatus.UP ? ComputeServer.PowerState.on : ComputeServer.PowerState.off
+                    def powerState = cloudItem.status == 'up' ? ComputeServer.PowerState.on : ComputeServer.PowerState.off
                     def zonePool = morpheusContext.async.cloud.pool.find(new DataQuery().withFilter('externalId', vmDetails.clusterId)).blockingGet()
 
-                    if (cloudItem.name() != currentServer.name) {
-                        currentServer.name = cloudItem.name()
+                    if (cloudItem.name != currentServer.name) {
+                        currentServer.name = cloudItem.name
                         save = true
                     }
                     if (currentServer.resourcePool?.id != zonePool?.id) {

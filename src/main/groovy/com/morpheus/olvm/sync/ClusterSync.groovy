@@ -13,18 +13,15 @@ import com.morpheusdata.model.CloudPool
 import com.morpheusdata.model.projection.CloudPoolIdentity
 import groovy.util.logging.Slf4j
 import io.reactivex.rxjava3.core.Observable
-import org.ovirt.engine.sdk4.Connection
-import org.ovirt.engine.sdk4.internal.containers.ClusterContainer
-import org.ovirt.engine.sdk4.types.DataCenterStatus
 
 @Slf4j
 class ClusterSync {
     private Cloud cloud
     private MorpheusContext morpheusContext
     private OlvmCloudPlugin plugin
-    private Connection connection
+    private Map connection
 
-    public ClusterSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Connection connection = null) {
+    public ClusterSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Map connection = null) {
         super()
         this.@cloud = cloud
         this.@plugin = plugin
@@ -36,7 +33,7 @@ class ClusterSync {
         log.info("Starting OLVM cluster sync for cloud ${cloud.name})")
         try {
             if (!connection)
-                connection = OlvmComputeUtility.getConnection(cloud)
+                this.@connection = OlvmComputeUtility.getToken(cloud)
 
             Observable<CloudPoolIdentity> domainRecords = morpheusContext.async.cloud.pool.listIdentityProjections(
                 new DataQuery().withFilters(
@@ -46,9 +43,9 @@ class ClusterSync {
                 )
             )
             def olvmClusters = OlvmComputeUtility.listClusters([connection:connection]).data.clusters
-            SyncTask<CloudPoolIdentity, ClusterContainer, CloudPool> syncTask = new SyncTask<>(domainRecords, olvmClusters)
+            SyncTask<CloudPoolIdentity, Map, CloudPool> syncTask = new SyncTask<>(domainRecords, olvmClusters)
             def rtn = syncTask.addMatchFunction { domainObject, cloudObject ->
-                return domainObject.externalId == cloudObject.id()
+                return domainObject.externalId == cloudObject.id
             }.onDelete { removeItems ->
                 removeClusters(removeItems)
             }.onUpdate { updateItems ->
@@ -70,22 +67,22 @@ class ClusterSync {
         morpheusContext.async.cloud.pool.bulkRemove(removeItems).blockingGet()
     }
 
-    protected addMissingClusters(List<ClusterContainer> clusters) {
+    protected addMissingClusters(List<Map> clusters) {
         def adds = []
         for (cloudItem in clusters) {
             adds << new CloudPool(
-                owner:new Account(id:cloud.defaultPoolSyncAccount ?: cloud.owner.id),
-                type:'cluster',
-                name:cloudItem.name(),
-                displayName:cloudItem.name(),
-                description:cloudItem.descriptionPresent() ? cloudItem.description() : "A cluster named ${cloudItem.name()} version ${cloudItem.version().fullVersion()}",
-                externalId:cloudItem.id(),
-                refType:'ComputeZone',
-                refId:cloud.id,
-                cloud:[id:cloud.id],
-                category:"olvm.plugin.cluster.${cloud.id}",
-                code:"olvm.plugin.cluster.${cloud.id}.${cloudItem.id()}",
-                active:cloud.defaultPoolSyncActive
+                owner: new Account(id: cloud.defaultPoolSyncAccount ?: cloud.owner.id),
+                type: 'cluster',
+                name: cloudItem.name,
+                displayName: cloudItem.name,
+                description: cloudItem.description ?: "A cluster named ${cloudItem.name} version ${cloudItem.version?.major}.${cloudItem.version?.minor}",
+                externalId: cloudItem.id,
+                refType: 'ComputeZone',
+                refId: cloud.id,
+                cloud: [id: cloud.id],
+                category: "olvm.plugin.cluster.${cloud.id}",
+                code: "olvm.plugin.cluster.${cloud.id}.${cloudItem.id}",
+                active: cloud.defaultPoolSyncActive
             )
         }
         if (adds) {
@@ -93,15 +90,15 @@ class ClusterSync {
         }
     }
 
-    protected updateMatchedClusters(List<SyncList.UpdateItem<CloudPool,ClusterContainer>> updateList) {
+    protected updateMatchedClusters(List<SyncList.UpdateItem<CloudPool, Map>> updateList) {
         def updates = []
         for (updateItem in updateList) {
             def masterItem = updateItem.masterItem
             def existingItem = updateItem.existingItem
             def save = false
 
-            if (existingItem.name != masterItem.name()) {
-                existingItem.name = masterItem.name()
+            if (existingItem.name != masterItem.name) {
+                existingItem.name = masterItem.name
                 save = true
             }
             if (save)
@@ -110,18 +107,5 @@ class ClusterSync {
         if (updates) {
             morpheusContext.async.cloud.pool.bulkSave(updates).blockingGet()
         }
-    }
-
-    protected CloudPool.Status translateStatus(DataCenterStatus olvmStatus) {
-        def datacenterStatus
-        switch (olvmStatus) {
-            case DataCenterStatus.UP:
-                datacenterStatus = CloudPool.Status.available
-                break
-            default:
-                datacenterStatus = CloudPool.Status.failed
-                break
-        }
-        return datacenterStatus
     }
 }

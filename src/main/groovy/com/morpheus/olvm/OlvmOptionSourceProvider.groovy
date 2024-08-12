@@ -111,19 +111,13 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
         Cloud cloud = loadCloud(args)
         def rtn
         if(cloud?.accountCredentialData?.username && cloud?.accountCredentialData?.password) {
-            def connection
-            try {
-                connection = OlvmComputeUtility.getConnection(cloud)
-                def dcResult = OlvmComputeUtility.listDatacenters([connection: connection])
-                if (dcResult.success && dcResult.data.datacenters) {
-                    rtn = [[name: morpheusContext.services.localization.get('gomorpheus.label.all'), value: 'all']]
-                    for (dc in dcResult.data.datacenters) {
-                        rtn << [name: "${dc.name()}", value: dc.id()]
-                    }
+            def connection = OlvmComputeUtility.getToken(cloud)
+            def dcResult = OlvmComputeUtility.listDatacenters([connection:connection])
+            if (dcResult.success && dcResult.data.datacenters) {
+                rtn = [[name: morpheusContext.services.localization.get('gomorpheus.label.all'), value: 'all']]
+                for (dc in dcResult.data.datacenters) {
+                    rtn << [name:dc.name, value:dc.id]
                 }
-            }
-            finally {
-                connection?.close()
             }
         }
         return rtn ?: [[name:'No datacenters found: verify credentials above.', value: '-1', isDefault: true]]

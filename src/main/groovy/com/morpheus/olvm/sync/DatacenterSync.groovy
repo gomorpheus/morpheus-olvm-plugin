@@ -11,19 +11,16 @@ import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.CloudPool
 import com.morpheusdata.model.projection.CloudPoolIdentity
 import groovy.util.logging.Slf4j
-import org.ovirt.engine.sdk4.Connection
 import io.reactivex.rxjava3.core.Observable
-import org.ovirt.engine.sdk4.internal.containers.DataCenterContainer
-import org.ovirt.engine.sdk4.types.DataCenterStatus
 
 @Slf4j
 class DatacenterSync {
     private Cloud cloud
     private MorpheusContext morpheusContext
     private OlvmCloudPlugin plugin
-    private Connection connection
+    private Map connection
 
-    public DatacenterSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Connection connection = null) {
+    public DatacenterSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Map connection = null) {
         super()
         this.@cloud = cloud
         this.@plugin = plugin
@@ -34,8 +31,8 @@ class DatacenterSync {
     def execute() {
         log.info("Starting OLVM datacenter sync for cloud ${cloud.name})")
         try {
-            if (!connection)
-                connection = OlvmComputeUtility.getConnection(cloud)
+            if (!this.@connection)
+                this.@connection = OlvmComputeUtility.getToken(cloud)
 
             Observable<CloudPoolIdentity> domainRecords = morpheusContext.async.cloud.pool.listIdentityProjections(
                 new DataQuery().withFilters(
@@ -45,9 +42,9 @@ class DatacenterSync {
                 )
             )
             def olvmDatacenters = OlvmComputeUtility.listDatacenters([connection:connection]).data.datacenters
-            SyncTask<CloudPoolIdentity, DataCenterContainer, CloudPool> syncTask = new SyncTask<>(domainRecords, olvmDatacenters)
+            SyncTask<CloudPoolIdentity, Map, CloudPool> syncTask = new SyncTask<>(domainRecords, olvmDatacenters)
             def rtn = syncTask.addMatchFunction { domainObject, cloudObject ->
-                return domainObject.externalId == cloudObject.id()
+                return domainObject.externalId == cloudObject.id
             }.onDelete { removeItems ->
                 removeDatacenters(removeItems)
             }.onUpdate { updateItems ->
@@ -69,22 +66,22 @@ class DatacenterSync {
         morpheusContext.async.cloud.pool.bulkRemove(removeItems).blockingGet()
     }
 
-    protected addMissingDatacenters(List<DataCenterContainer> datacenters) {
+    protected addMissingDatacenters(List<Map> datacenters) {
         def adds = []
         for (cloudItem in datacenters) {
             adds << new CloudPool(
                 owner:[id:cloud.owner.id],
                 type:'datacenter',
-                name:cloudItem.name(),
-                displayName:cloudItem.name(),
-                description:"${cloudItem.name()} - version: ${cloudItem.version().fullVersion()}",
-                externalId:cloudItem.id(),
-                status:translateStatus(cloudItem.status()),
+                name:cloudItem.name,
+                displayName:cloudItem.name,
+                description:"${cloudItem.description} - version: ${cloudItem.version?.major}.${cloudItem.version?.minor}",
+                externalId:cloudItem.id,
+                status:translateStatus(cloudItem.status?.toLowerCase()),
                 refType:'ComputeZone',
                 refId:cloud.id,
                 cloud:[id:cloud.id],
                 category:"olvm.plugin.datacenter.${cloud.id}",
-                code:"olvm.plugin.datacenter.${cloud.id}.${cloudItem.id()}"
+                code:"olvm.plugin.datacenter.${cloud.id}.${cloudItem.id}"
             )
         }
         if (adds) {
@@ -92,19 +89,19 @@ class DatacenterSync {
         }
     }
 
-    protected updateMatchedDatacenters(List<SyncList.UpdateItem<CloudPool,DataCenterContainer>> updateList) {
+    protected updateMatchedDatacenters(List<SyncList.UpdateItem<CloudPool,Map>> updateList) {
         def updates = []
         for (updateItem in updateList) {
             def masterItem = updateItem.masterItem
             def existingItem = updateItem.existingItem
             def save = false
 
-            if (existingItem.name != masterItem.name()) {
-                existingItem.name = masterItem.name()
+            if (existingItem.name != masterItem.name) {
+                existingItem.name = masterItem.name
                 save = true
             }
-            if (existingItem.status != translateStatus(masterItem.status())) {
-                existingItem.status = translateStatus(masterItem.status())
+            if (existingItem.status != translateStatus(masterItem.status?.toLowerCase())) {
+                existingItem.status = translateStatus(masterItem.status?.toLowerCase())
                 save = true
             }
             if (save)
@@ -115,10 +112,10 @@ class DatacenterSync {
         }
     }
 
-    protected CloudPool.Status translateStatus(DataCenterStatus olvmStatus) {
+    protected CloudPool.Status translateStatus(String olvmStatus) {
         def datacenterStatus
         switch (olvmStatus) {
-            case DataCenterStatus.UP:
+            case 'up':
                 datacenterStatus = CloudPool.Status.available
                 break
             default:

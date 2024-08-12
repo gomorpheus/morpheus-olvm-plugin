@@ -369,12 +369,10 @@ class OlvmCloudProvider implements CloudProvider {
 	@Override
 	ServiceResponse refresh(Cloud cloudInfo) {
 		ServiceResponse rtn = ServiceResponse.prepare()
-		def connection
-
 		try {
 			def testResults = OlvmComputeUtility.testConnection(cloudInfo)
 			if(testResults.success) {
-				connection = testResults.data.connection
+				def connection = testResults.data.connection
 				def now = new Date().time
 				new DatacenterSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
 				log.info("${cloudInfo.name}: Datacenters Synced in ${new Date().time - now}ms")
@@ -401,9 +399,6 @@ class OlvmCloudProvider implements CloudProvider {
 		 }
 		catch (Throwable t) {
 			log.error("refresh cloud error: ${t.message}", t)
-		}
-		finally {
-			connection?.close()
 		}
 		return rtn
 	}

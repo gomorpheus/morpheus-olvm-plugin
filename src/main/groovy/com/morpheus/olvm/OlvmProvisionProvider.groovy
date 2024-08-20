@@ -45,8 +45,6 @@ import com.morpheusdata.response.PrepareWorkloadResponse
 import com.morpheusdata.response.ProvisionResponse
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
-import org.ovirt.engine.sdk4.Connection
-import org.ovirt.engine.sdk4.types.VmStatus
 
 @Slf4j
 class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvisionProvider, WorkloadProvisionProvider, WorkloadProvisionProvider.ResizeFacet {
@@ -607,11 +605,11 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	@Override
 	ServiceResponse<ProvisionResponse> runHost(ComputeServer server, HostRequest hostRequest, Map opts) {
 		log.debug "runHost: ${server} ${hostRequest} ${opts}"
-		Connection connection
+		Map connection
 		ProvisionResponse provisionResponse = new ProvisionResponse(success: true, installAgent: false)
 		try {
 			Cloud cloud = server.cloud
-			connection = OlvmComputeUtility.getConnection(cloud, morpheus)
+			connection = OlvmComputeUtility.getToken(cloud, morpheus)
 			VirtualImage virtualImage = server.sourceImage
 
 			def runConfig = buildHostRunConfig(server, hostRequest, virtualImage, connection, opts)
@@ -624,13 +622,10 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			}
 
 		}
-		catch (e) {
-			log.error "runWorkload: ${e}", e
-			provisionResponse.setError(e.message)
-			return new ServiceResponse(success: false, msg: e.message, error: e.message, data: provisionResponse)
-		}
-		finally {
-			connection?.close()
+		catch (Throwable t) {
+			log.error "runHost: ${t}", t
+			provisionResponse.setError(t.message)
+			return new ServiceResponse(success: false, msg: t.message, error: t.message, data: provisionResponse)
 		}
 	}
 
@@ -1112,8 +1107,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			rtn.error= "Error resizing olvm instance to ${plan.name} ${t.message}"
 		}
 		finally {
-			if (closeConnection)
-				connection?.close()
+			client?.shutdownClient()
 		}
 		return new ServiceResponse(success: rtn.success, data: [supported: rtn.supported])
 	}
@@ -1250,20 +1244,15 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	ServiceResponse stopServer(ComputeServer server) {
 		log.debug("stopServer: ${server}")
 		if(server?.externalId && (server.managed == true || server.computeServerType?.controlPower)) {
-			Connection connection
-			try {
-				connection = OlvmComputeUtility.getConnection(server.cloud, morpheus)
-				def stopResult = OlvmComputeUtility.stopVm([server:server, connection:connection])
+			Map connection
+			connection = OlvmComputeUtility.getToken(server.cloud, morpheus)
+			def stopResult = OlvmComputeUtility.stopVm([server:server, connection:connection])
 
-				if (stopResult.success) {
-					return ServiceResponse.success()
-				}
-				else {
-					return ServiceResponse.error('Failed to stop vm')
-				}
+			if (stopResult.success) {
+				return ServiceResponse.success()
 			}
-			finally {
-				connection?.close()
+			else {
+				return ServiceResponse.error('Failed to stop vm')
 			}
 		}
 		else {
@@ -1281,20 +1270,15 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	ServiceResponse startServer(ComputeServer server) {
 		log.debug("startServer: ${server}")
 		if(server?.externalId && (server.managed == true || server.computeServerType?.controlPower)) {
-			Connection connection
-			try {
-				connection = OlvmComputeUtility.getConnection(server.cloud, morpheus)
-				def startResult = OlvmComputeUtility.startVm([server:server, connection:connection])
+			Map connection
+			connection = OlvmComputeUtility.getToken(server.cloud, morpheus)
+			def startResult = OlvmComputeUtility.startVm([server:server, connection:connection])
 
-				if (startResult.success == true) {
-					return ServiceResponse.success()
-				}
-				else {
-					return ServiceResponse.error('Failed to start vm')
-				}
+			if (startResult.success == true) {
+				return ServiceResponse.success()
 			}
-			finally {
-				connection?.close()
+			else {
+				return ServiceResponse.error('Failed to start vm')
 			}
 		}
 		else {

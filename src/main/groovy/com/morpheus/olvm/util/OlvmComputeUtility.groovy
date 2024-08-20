@@ -8,7 +8,6 @@ import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.ComputeServerInterface
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
-import org.apache.tools.ant.taskdefs.condition.Http
 import org.ovirt.engine.sdk4.Connection
 import org.ovirt.engine.sdk4.internal.containers.SnapshotContainer
 import org.ovirt.engine.sdk4.types.SnapshotStatus
@@ -22,7 +21,6 @@ import java.security.cert.X509Certificate
 
 import static org.ovirt.engine.sdk4.ConnectionBuilder.connection
 import static org.ovirt.engine.sdk4.builders.Builders.cluster
-import static org.ovirt.engine.sdk4.builders.Builders.nic
 import static org.ovirt.engine.sdk4.builders.Builders.snapshot
 import static org.ovirt.engine.sdk4.builders.Builders.template
 import static org.ovirt.engine.sdk4.builders.Builders.vm

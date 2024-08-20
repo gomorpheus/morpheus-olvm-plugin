@@ -8,20 +8,10 @@ import com.morpheusdata.model.Cloud
 import com.morpheusdata.model.ComputeServerInterface
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
+import org.apache.tools.ant.taskdefs.condition.Http
 import org.ovirt.engine.sdk4.Connection
-import org.ovirt.engine.sdk4.builders.CpuBuilder
-import org.ovirt.engine.sdk4.builders.NicBuilder
-import org.ovirt.engine.sdk4.internal.containers.ImageTransferContainer
 import org.ovirt.engine.sdk4.internal.containers.SnapshotContainer
-import org.ovirt.engine.sdk4.types.DiskFormat
-import org.ovirt.engine.sdk4.types.DiskInterface
-import org.ovirt.engine.sdk4.types.DiskStatus
-import org.ovirt.engine.sdk4.types.ImageTransferDirection
-import org.ovirt.engine.sdk4.types.ImageTransferPhase
-import org.ovirt.engine.sdk4.types.IpVersion
-import org.ovirt.engine.sdk4.types.Nic
 import org.ovirt.engine.sdk4.types.SnapshotStatus
-import org.ovirt.engine.sdk4.types.TemplateStatus
 import org.ovirt.engine.sdk4.types.VmStatus
 
 import javax.net.ssl.HttpsURLConnection
@@ -32,16 +22,8 @@ import java.security.cert.X509Certificate
 
 import static org.ovirt.engine.sdk4.ConnectionBuilder.connection
 import static org.ovirt.engine.sdk4.builders.Builders.cluster
-import static org.ovirt.engine.sdk4.builders.Builders.cpu
-import static org.ovirt.engine.sdk4.builders.Builders.cpuTopology
-import static org.ovirt.engine.sdk4.builders.Builders.disk
-import static org.ovirt.engine.sdk4.builders.Builders.diskAttachment
-import static org.ovirt.engine.sdk4.builders.Builders.image
-import static org.ovirt.engine.sdk4.builders.Builders.imageTransfer
-import static org.ovirt.engine.sdk4.builders.Builders.initialization
 import static org.ovirt.engine.sdk4.builders.Builders.nic
 import static org.ovirt.engine.sdk4.builders.Builders.snapshot
-import static org.ovirt.engine.sdk4.builders.Builders.storageDomain
 import static org.ovirt.engine.sdk4.builders.Builders.template
 import static org.ovirt.engine.sdk4.builders.Builders.vm
 import static org.ovirt.engine.sdk4.builders.Builders.vnicProfile
@@ -49,7 +31,6 @@ import static org.ovirt.engine.sdk4.builders.Builders.vnicProfile
 @Slf4j
 class OlvmComputeUtility {
     public static final Long DEFAULT_WAIT_TIMEOUT = 30l * 60l // 30 minute default
-    private static Boolean proxySelectorConfigured = false
 
     static listDatacenters(opts) {
         ServiceResponse rtn = ServiceResponse.prepare()
@@ -60,7 +41,7 @@ class OlvmComputeUtility {
                 connection = getToken(opts.cloud)
             }
             def headers = getAuthenticatedBaseHeaders(connection)
-            client = new HttpApiClient()
+            client = getApiClient(connection)
             def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
             def resp = client.callJsonApi(
                 connection.apiUrl,
@@ -100,7 +81,7 @@ class OlvmComputeUtility {
             }
 
             def headers = getAuthenticatedBaseHeaders(connection)
-            client = new HttpApiClient()
+            client = getApiClient(connection)
             def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
             def response = client.callJsonApi(
                 connection.apiUrl,
@@ -141,7 +122,7 @@ class OlvmComputeUtility {
             }
 
             def headers = getAuthenticatedBaseHeaders(connection)
-            client = new HttpApiClient()
+            client = getApiClient(connection)
             def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
             def response = client.callJsonApi(
                 connection.apiUrl,
@@ -183,7 +164,7 @@ class OlvmComputeUtility {
             }
 
             def headers = getAuthenticatedBaseHeaders(connection)
-            client = new HttpApiClient()
+            client = getApiClient(connection)
             def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
             def response = client.callJsonApi(
                 connection.apiUrl,
@@ -195,7 +176,7 @@ class OlvmComputeUtility {
             if (response.success) {
                 rtn.data = [
                     connection: connection,
-                    vms: response.data['vm']
+                    vms: response.data['vm'] ?: []
                 ]
                 rtn.success = true
             }
@@ -209,8 +190,7 @@ class OlvmComputeUtility {
             rtn.error = "Unable to get virtual machines: ${t.message}"
         }
         finally {
-            if (client)
-                client.shutdownClient()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -224,8 +204,9 @@ class OlvmComputeUtility {
                 connection = getToken(opts.cloud)
             }
             def headers = getAuthenticatedBaseHeaders(connection)
-            client = new HttpApiClient()
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            client = getApiClient(connection)
+            def queryParams = [follow:'vnicprofiles']
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
             def response = client.callJsonApi(
                 connection.apiUrl,
                 '/ovirt-engine/api/networks',
@@ -234,9 +215,38 @@ class OlvmComputeUtility {
             )
 
             if (response.success) {
+                def networks = []
+                for (network in response.data.network) {
+                    def profiles = network['vnic_profiles']?.getAt('vnic_profile')
+                    if (profiles) {
+                        for (profile in profiles) {
+                            networks << [
+                                id:profile.id,
+                                name:profile.name,
+                                provisionable:true,
+                                vlanId:network.vlan?.id,
+                                datacenterId:network['data_center']?.id,
+                                description:profile.description ?: network.description,
+                                type:'profile'
+                            ]
+                        }
+                    }
+                    else {
+                        networks << [
+                            id:network.id,
+                            name:network.name,
+                            provisionable:false,
+                            vlanId:network.vlan?.id,
+                            datacenterId:network['data_center']?.id,
+                            description:network.description,
+                            type:'network'
+                        ]
+
+                    }
+                }
                 rtn.data = [
                     connection: connection,
-                    profiles  : response.data['network']
+                    networks:networks
                 ]
                 rtn.success = true
             }
@@ -265,7 +275,7 @@ class OlvmComputeUtility {
             }
 
             def headers = getAuthenticatedBaseHeaders(connection)
-            client = new HttpApiClient()
+            client = getApiClient(connection)
             def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
             def response = client.callJsonApi(
                 connection.apiUrl,
@@ -319,35 +329,62 @@ class OlvmComputeUtility {
 
     static loadImage(opts) {
         def rtn = ServiceResponse.prepare()
-        def closeConnection = false
-        def connection = opts.connection
+        Map connection = opts.connection
+        HttpApiClient client
 
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
+                connection = getToken(opts.cloud)
             }
+            client = getApiClient(connection)
+            def headers = getAuthenticatedBaseHeaders(connection)
 
-            def templateService = connection.systemService().templatesService()
             if (opts.imageName) {
+                // if using just an image name, we must leverage the search service
                 def imageName = opts.imageName.replaceAll(' ', '_')
-                def templates =
-                    templateService.list().search("name=${imageName}").caseSensitive(false).send().templates()
-                rtn.data = [template:(templates?.size() > 0 ? templates.first() : null)]
+                def queryParams = [search:"name=${imageName}".toString()]
+                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
+                def response = client.callJsonApi(
+                    connection.apiUrl,
+                    '/ovirt-engine/api/templates',
+                    reqOptions,
+                    'GET'
+                )
+
+                if (response.success) {
+                    def templates = response.data.template
+                    rtn.data = [template: (templates?.size() > 0 ? templates.first() : null)]
+                    rtn.success = true
+                }
+                else {
+                    rtn.error = "Failed to retrieve image ${opts.imageName}:${extractErrorMessage(response.data)}"
+                    rtn.success = false
+                }
             }
             else if (opts.imageId) {
-                def template =
-                    templateService.templateService(opts.imageId).get().send().template()
-                rtn.data = [template:template]
+                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+                def response = client.callJsonApi(
+                    connection.apiUrl,
+                    "/ovirt-engine/api/templates/${opts.imageId}".toString(),
+                    reqOptions,
+                    'GET'
+                )
+                if (response.success) {
+                    rtn.data = [template: response.data]
+                    rtn.success = true
+                }
+                else {
+                    rtn.error = "Failed to retrieve image ${opts.imageId}:${extractErrorMessage(response.data)}"
+                    rtn.success = false
+                }
             }
-            rtn.success = true
         }
         catch (Throwable t) {
             log.error("Unable to load image from OLVM cloud: ${t.message}")
             rtn.error = "Unable to load image from OLVM cloud: ${t.message}"
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -355,27 +392,31 @@ class OlvmComputeUtility {
     static insertImage(opts) {
         log.debug("createServer opts: ${opts}")
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
-                closeConnection = true
+                connection = getToken(opts.cloud)
             }
 
             // first lets see if our image exists in olvm cloud
             def vi = opts.image.virtualImage
             def imageName = vi.name.replaceAll(' ', '_')
-            def templatesService = connection.systemService().templatesService()
-            def existing = templatesService.list().search("name=${imageName}".toString()).send().templates()
-            if (existing.size() > 0) {
+            def headers = getAuthenticatedBaseHeaders(connection)
+            def queryParams = [search:"name=${imageName}".toString()]
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
+            client = getApiClient(connection)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                '/ovirt-engine/api/templates',
+                reqOptions,
+                'GET'
+            )
+            if (response.data.template?.size() > 0) {
                 rtn.success = true
-                rtn.data = [imageRef:existing.first().id()]
+                rtn.data = [imageRef:response.data.template.first().id]
             }
             else {
-                // grab domain service for the storage domain we wish to use
-                def storageDomainService = connection.systemService().storageDomainsService().storageDomainService(opts.storageDomainId)
-
                 // grab the inputstream of our qcow file and wrap in QcowInputStream to get the size of the disk we need
                 CloudFile cloudFile = opts.image.imageFile
                 Qcow2InputStream qcowInputStream = new Qcow2InputStream(cloudFile.inputStream, true)
@@ -383,63 +424,99 @@ class OlvmComputeUtility {
 
                 // create a blank disk
                 def tmpDiskName = "morph_tmp_${opts.image.virtualImage.id}"
-                def blank = storageDomainService.disksService().add().disk(
-                    disk()
-                        .name(tmpDiskName)
-                        .format(DiskFormat.COW)
-                        .provisionedSize(actualDiskSize)
-                        .storageDomain(
-                            storageDomain()
-                                .id(opts.storageDomainId)
-                        )
-                ).send().disk()
+                def postHeaders = getAuthenticatedBaseHeaders(connection)
+                def reqBody = [
+                    name:tmpDiskName,
+                    format:'cow',
+                    'provisioned_size':actualDiskSize,
+                    'storage_domains':[
+                        'storage_domain':[[id:opts.storageDomainId]]
+                    ]
+                ]
+                def postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:true)
+                response = client.callJsonApi(
+                    connection.apiUrl,
+                    '/ovirt-engine/api/disks',
+                    postReqOptions,
+                    'POST'
+                )
+                def blank = response.data
 
                 // Wait for disk to be ready before we start data transfer
+                reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
                 waitForSomeStuffToHappen([label: "Waiting for blank disk to be ready"]) {
-                    def emptyDisk = connection.followLink(blank)
-                    return emptyDisk.status() == DiskStatus.OK
+                    response = client.callJsonApi(
+                        connection.apiUrl,
+                        blank.href,
+                        reqOptions,
+                        'GET'
+                    )
+                    return response.data.status == 'ok'
                 }
 
                 // create an image transfer session
-                def blankDiskId = blank.id()
-                def xfersService = connection.systemService().imageTransfersService()
-                def transferObj = xfersService.addForDisk().imageTransfer(
-                    imageTransfer()
-                        .direction(ImageTransferDirection.UPLOAD)
-                        .inactivityTimeout(15 * 60) // in seconds
-                        .image(
-                            image()
-                                .id(blankDiskId)
-                        )
-                ).send().imageTransfer()
-                def xferId = transferObj.id()
-                def xferService = xfersService.imageTransferService(xferId)
+                def blankDiskId = blank.id
+                reqBody = [disk:[id:blankDiskId], direction:'upload', 'inactivity_timeout':15 * 60]
+                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:true)
+                def transferSession = client.callJsonApi(
+                    connection.apiUrl,
+                    '/ovirt-engine/api/imagetransfers',
+                    postReqOptions,
+                    'POST'
+                )
+
+                if (!transferSession.success) {
+                    throw new RuntimeException("Failed to initialize transfer session:${extractErrorMessage(transferSession.data)}")
+                }
+
+                def transferObj = transferSession.data
+                def xferId = transferObj.id
 
                 // wait for the image transfer session to hit the transferring state
-                ImageTransferContainer imageXfer
+                def imageXfer
                 waitForSomeStuffToHappen([label: "Waiting for image transfer to go TRANSFERRING"]) {
-                    imageXfer = xferService.get().send().imageTransfer()
-                    log.debug("Image transfer phase is ${imageXfer.phase()}")
-                    return imageXfer.phase() == ImageTransferPhase.TRANSFERRING
+                    response = client.callJsonApi(
+                        connection.apiUrl,
+                        "/ovirt-engine/api/imagetransfers/${xferId}".toString(),
+                        reqOptions,
+                        'GET'
+                    )
+                    imageXfer = response.data
+                    log.debug("Image transfer phase is ${imageXfer.phase}")
+                    return imageXfer.phase == 'transferring'
                 }
 
                 // Now push the file contents of our qcow file to OLVM
-                def transferUrl = new URL(imageXfer.proxyUrl())
-
+                def transferUrl = new URL(imageXfer['proxy_url'])
 
                 // TODO: should we use a progress input stream here to update as we upload?
                 pushDataToTarget(qcowInputStream, transferUrl, connection, cloudFile.contentLength)
 
-                xferService.finalize_().send()
+                // once data has been pushed to target, finalize the transfer
+                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:[:], ignoreSSL:true)
+                response = client.callJsonApi(
+                    connection.apiUrl,
+                    "/ovirt-engine/api/imagetransfers/${xferId}/finalize".toString(),
+                    postReqOptions,
+                    'POST'
+                )
+
+                if (!response.success) {
+                    throw new RuntimeException("Failed to finalize image transfer session: ${extractErrorMessage(response.data)}")
+                }
 
                 // after we finalize the transfer wait for the image disk to be ok
-                def disksService = connection.systemService().disksService()
-                def diskService = disksService.diskService(blankDiskId)
-                waitForSomeStuffToHappen([label: "Wait for disk ${blank.name()}"]) {
-                    def d = diskService.get().send().disk()
-                    log.debug("Disk ${d.name()}(${d.id()}) status is ${d.status()}")
-                    actualDiskSize = d.actualSize()
-                    return d.status() == DiskStatus.OK
+                waitForSomeStuffToHappen([label: "Wait for disk ${blank.name}"]) {
+                    response = client.callJsonApi(
+                        connection.apiUrl,
+                        blank.href,
+                        reqOptions,
+                        'GET'
+                    )
+                    def d = response.data
+                    log.debug("Disk ${d.name}(${d.id}) status is ${d.status}")
+                    actualDiskSize = d['actual_size']
+                    return d.status == 'ok'
                 }
 
                 // HACK: OLVM is so stupid.  There is a lag between when the api reports the disk status as OK and when
@@ -447,79 +524,103 @@ class OlvmComputeUtility {
                 // disk is locked, when its actually not.  So we are forcing a 3 second delay between the two operations
                 sleep(3000l)
 
-                // Next we need to create a temporary VM and attach our disk to it
-                def vmsService = connection.systemService().vmsService()
-                def newVm = vmsService.add().vm(
-                    vm()
-                        .name("morpheus-tmp-${opts.image.virtualImage.id}")
-                        .cluster(
-                            cluster()
-                                .id(opts.clusterRef) // Specify the cluster where you want to create the VM
-                        )
-                        .diskAttachments(
-                            diskAttachment()
-                                .disk(
-                                    disk()
-                                        .id(blankDiskId)
-                                )
-                        )
-                        .template(
-                            template()
-                                .name('Blank')
-                        )
-                ).send().vm()
+                // TODO: Next we need to create a temporary VM and attach our disk to it
+                reqBody = [
+                    name:"morpheus-tmp-${opts.image.virtualImage.id}".toString(),
+                    cluster:[id:opts.clusterRef],
+                    template:[id:'00000000-0000-0000-0000-000000000000']
+                ]
+                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:true)
+                response = client.callJsonApi(
+                    connection.apiUrl,
+                    '/ovirt-engine/api/vms',
+                    postReqOptions,
+                    'POST'
+                )
+
+                if (!response.success) {
+                    throw new RuntimeException("Failed to create vm for template: ${extractErrorMessage(response.data)}")
+                }
+
+                def newVm = response.data
 
                 // wait for new VM to be ready
-                waitForSomeStuffToHappen([label: "Waiting for vm ${newVm.name()} to be ready"]) {
-                    def v = vmsService.vmService(newVm.id()).get().send().vm()
-                    log.debug("Vm ${v.name()}(${v.id()}) status is ${v.status()}")
-                    return v.status() == VmStatus.DOWN
+                waitForSomeStuffToHappen([label: "Waiting for vm ${newVm.name} to be ready"]) {
+                    response = client.callJsonApi(
+                        connection.apiUrl,
+                        "/ovirt-engine/api/vms/${newVm.id}".toString(),
+                        reqOptions,
+                        'GET'
+                    )
+                    def v = response.data
+                    log.debug("Vm ${v.name}(${v.id}) status is ${v.status}")
+                    return v.status == 'down'
                 }
 
                 // attach our disk to our temporary vm
-                def diskAttachmentsService = vmsService.vmService(newVm.id()).diskAttachmentsService()
-                def attachment = diskAttachmentsService.add()
-                    .attachment(
-                        diskAttachment()
-                            .disk(
-                                disk()
-                                    .id(blankDiskId)
-                            )
-                            .interface_(DiskInterface.VIRTIO)
-                            .bootable(true)
-                            .active(true)
-                    )
-                    .send().attachment()
+                reqBody = [
+                    bootable:true,
+                    interface:'virtio',
+                    active:true,
+                    disk:[id:blankDiskId]
+                ]
+                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:true)
+                response = client.callJsonApi(
+                    connection.apiUrl,
+                    "/ovirt-engine/api/vms/${newVm.id}/diskattachments",
+                    postReqOptions,
+                    'POST'
+                )
 
-                // wait for disk attachment to completes
-                diskService = disksService.diskService(attachment.disk().id())
+                if (!response.success) {
+                    throw new RuntimeException("Failed to attach disk to vm: ${extractErrorMessage(response.data)}")
+                }
+
+                // wait for disk attachment to complete
                 waitForSomeStuffToHappen([label: "Waiting disk ${blankDiskId} to be ready"]) {
-                    def d = diskService.get().send().disk()
-                    log.debug("Disk ${d.name()}(${d.id()}) status is ${d.status()}")
-                    return d.status() == DiskStatus.OK
+                    response = client.callJsonApi(
+                        connection.apiUrl,
+                        blank.href,
+                        reqOptions,
+                        'GET'
+                    )
+                    def d = response.data
+                    log.debug("Disk ${d.name}(${d.id}) status is ${d.status}")
+                    return d.status == 'ok'
                 }
 
                 // create template from this vm
-                def newTemplate = templatesService.add().template(
-                    template()
-                        .vm(
-                            vm()
-                                .id(newVm.id())
-                        )
-                        .name(imageName)
-                ).send().template()
+                reqBody = [name:imageName, vm:[id:newVm.id]]
+                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:true)
+                response = client.callJsonApi(
+                    connection.apiUrl,
+                    '/ovirt-engine/api/templates',
+                    postReqOptions,
+                    'POST'
+                )
+
+                if (!response.success) {
+                    throw new RuntimeException("Failed to create template from vm: ${extractErrorMessage(response.data)}")
+                }
+                def newTemplate = response.data
 
                 // wait for template to be usable
                 waitForSomeStuffToHappen([label: "Waiting for template ${imageName} to be ready"]) {
-                    def t = templatesService.templateService(newTemplate.id()).get().send().template()
-                    log.debug("Template ${t.name()}(${t.id()}) status is ${t.status()}")
-                    return t.status() == TemplateStatus.OK
+                    response = client.callJsonApi(
+                        connection.apiUrl,
+                        newTemplate.href,
+                        reqOptions,
+                        'GET'
+                    )
+                    def t = response.data
+                    log.debug("Template ${t.name}(${t.id}) status is ${t.status}")
+                    return t.status == 'ok'
                 }
 
                 // once our template is ready for use, remove our temporary vm
-                deleteServer([connection: connection, vmId: newVm.id()])
+                deleteServer([connection:connection, vmId:newVm.id])
 
-                rtn.data = [imageRef: newTemplate.id()]
+                rtn.data = [imageRef:newTemplate.id]
                 rtn.success = true
             }
         }
@@ -528,13 +629,12 @@ class OlvmComputeUtility {
             rtn.error = "Failed to create image template: ${t.message}"
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
         return rtn
     }
 
-    static pushDataToTarget(Qcow2InputStream inputStream, URL url, Connection con, Long contentLength = null) {
+    static pushDataToTarget(Qcow2InputStream inputStream, URL url, Map con, Long contentLength = null) {
     //static pushDataToTarget(InputStream inputStream, URL url, Connection con) {
         HttpURLConnection connection
         try {
@@ -567,7 +667,7 @@ class OlvmComputeUtility {
             connection.setRequestMethod("PUT")
             connection.setDoOutput(true); // Indicates that this connection will send data
             connection.setRequestProperty("Content-Type", "application/octet-stream")
-            connection.setRequestProperty("Authorization", "Bearer ${con.authenticate()}".toString())
+            connection.setRequestProperty("Authorization", "Bearer ${con.token}".toString())
 
             if (contentLength) {
                 connection.setFixedLengthStreamingMode(contentLength)
@@ -606,73 +706,72 @@ class OlvmComputeUtility {
     static createServer(opts) {
         log.debug("createServer opts: ${opts}")
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         try {
             if (!connection) {
-                connection getConnection(opts.cloud)
-                closeConnection = true
+                connection getToken(opts.cloud)
             }
             def imageRef = opts.imageRef
             def zoneRef = opts.zoneRef
             def networkRef = opts.subnetRef
             def count = opts.count ?: 1
 
-            // grab api services we will need for vm creation
-            def storagesService = connection.systemService().storageDomainsService()
-            def templatesService = connection.systemService().templatesService()
-            def vmsService = connection.systemService().vmsService()
-            def diskAttachmentService = templatesService.templateService(imageRef).diskAttachmentsService()
-            def rootAttachment = diskAttachmentService.list().send().attachments().first()
-            def templateDisk = connection.followLink(rootAttachment.disk())
+            // grab http client to use for provisioning requests
+            client = getApiClient(connection)
+
+            // grab template information
+            def headers = getAuthenticatedBaseHeaders(connection)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/templates/${imageRef}/diskattachments".toString(),
+                reqOptions,
+                'GET'
+            )
+
+            def templateDisk = response.data['disk_attachment'].first()
 
             // merge network interfaces
             def interfaces = [opts.networkConfig.primaryInterface]
             interfaces.addAll(opts.networkConfig.extraInterfaces)
 
             // send vm create to api
-            def response = vmsService.add()
-                .vm(
-                    vm()
-                    .name(opts.name)
-                    .cluster(
-                        cluster()
-                        .id(opts.clusterRef)
-                    )
-                    .template(
-                        template()
-                        .id(imageRef)
-                    )
-                    .cpu(
-                        buildCpus(opts.workloadConfig)
-                    )
-                    .memory(opts.maxMemory)
-                    .diskAttachments(
-                        diskAttachment()
-                        .disk(
-                            disk()
-                            .id(templateDisk.id())
-                            .provisionedSize(opts.rootVolume.maxStorage)
-                            .storageDomains(
-                                storageDomain()
-                                .id(opts.rootVolume.datastore.externalId)
-                            )
-                        )
-                    )
-                    .nics(buildNetworkInterfaces(interfaces))
-                )
-                .send()
-            def vmId = response.vm().id()
-            rtn.data = [vmId:vmId]
+            def postBody = [
+                name:opts.name,
+                cluster:[id:opts.clusterRef],
+                template:[id:imageRef],
+                memory:opts.maxMemory,
+                cpu:buildCpus(opts.workloadConfig),
+                nics:[nic:buildNetworkInterfaces(interfaces)],
+                'disk_attachments':[
+                    'disk_attachment':[
+                        [disk:[id:templateDisk.id, 'provisioned_size':opts.rootVolume.maxStorage, 'storage_domains':['storage_domain':[[id:opts.rootVolume.datastore.externalId]]]]]
+                    ]
+                ]
+            ]
+            def postHeaders = getAuthenticatedBaseHeaders(connection)
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:postBody, ignoreSSL:true)
+            response = client.callJsonApi(
+                connection.apiUrl,
+                '/ovirt-engine/api/vms/',
+                postReqOptions,
+                'POST'
+            )
+
+            if (!response.success) {
+                throw new RuntimeException("Failed to create vm ${opts.name}: ${extractErrorMessage(response.data)}")
+            }
+            def vm = response.data
+            rtn.data = [vmId:vm.id, vm:vm]
             rtn.success = true
         }
         catch (Throwable t) {
             rtn.error = "Failed to provision vm ${opts.name}: ${t.message}"
-            log.error("Failed to provision vm ${opts.name}: ${t.message}")
+            log.error("Failed to provision vm ${opts.name}: ${t.message}", t)
         }
         finally {
-            if (closeConnection)
-                connection.close()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -732,140 +831,189 @@ class OlvmComputeUtility {
 
     static startVmWithCloudInit(opts) {
         def rtn
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
-                closeConnection = true
+                connection = getToken(opts.cloud)
             }
-            def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
-            vmService.start()
-                .useCloudInit(true)
-                .vm(
-                    vm()
-                    .initialization(
-                        initialization()
-                        .customScript(opts.cloudInitScript)
-                    )
-                )
-                .send()
+            def vmExternalId = opts.server?.externalId ?: opts.vmId
+            def headers = getAuthenticatedBaseHeaders(connection)
+            headers['Content-Type'] = 'application/json'
+            client = getApiClient(connection)
+            def reqBody = [
+                'vm':[
+                    'initialization':[
+                        'custom_script':opts.cloudInitScript
+                    ]
+                ],
+                'async':true, 'use_cloud_init':true
+            ]
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:reqBody, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/vms/${vmExternalId}/start".toString(),
+                postReqOptions,
+                'POST'
+            )
 
-            rtn = waitForSomeStuffToHappen([label:"Start vm ${opts.server?.name}", timeout:(5l * 60l * 1000l)]) {
-                return vmService.get().send().vm().status() == VmStatus.UP
+            if (response.success) {
+                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+                rtn = waitForSomeStuffToHappen([label: "Start vm ${opts.server?.name}", timeout: (5l * 60l * 1000l)]) {
+                    response = client.callJsonApi(
+                        connection.apiUrl,
+                        "/ovirt-engine/api/vms/${vmExternalId}".toString(),
+                        reqOptions,
+                        'GET'
+                    )
+                    return response.data.status == 'up'
+                }
+            }
+            else {
+                rtn = ServiceResponse.error("Failed to start vm: ${extractErrorMessage(response.data)}")
             }
         }
         finally {
-            if (closeConnection)
-                connection?.close(0)
+            client?.shutdownClient()
         }
         return rtn
     }
 
     static startVm(opts) {
-        def rtn
-        Connection connection = opts.connection
-        def closeConnection = false
+        ServiceResponse rtn
+        Map connection = opts.connection
+        HttpApiClient client
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
-                closeConnection = true
+                connection = getToken(opts.cloud)
             }
-            def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
-            def vm = vmService.get().send().vm()
+            def headers = getAuthenticatedBaseHeaders(connection)
+            client = getApiClient(connection)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def vmExternalId = opts.server?.externalId ?: opts.vmId
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/vms/${vmExternalId}".toString(),
+                reqOptions,
+                'GET'
+            )
 
-            if (vm.status() != VmStatus.UP) {
-                vmService.start().send()
+            if (response.success) {
+                def vm = response.data
+                if (vm.status != 'up') {
+                    // if our vm status is not up, send the start command
+                    def actionBody = [async:true]
+                    def postHeaders = getAuthenticatedBaseHeaders(connection)
+                    postHeaders['Content-Type'] = 'application/json'
+                    def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:actionBody, ignoreSSL:true)
+                    response = client.callJsonApi(
+                        connection.apiUrl,
+                        "/ovirt-engine/api/vms/${vmExternalId}/start".toString(),
+                        postReqOptions,
+                        'POST'
+                    )
 
-                // wait for the VM to be up
-                rtn = waitForSomeStuffToHappen([label: "Start vm ${opts.server?.name}", timeout: (5l * 60l * 1000l)]) {
-                    return vmService.get().send().vm().status() == VmStatus.UP
+                    // wait for the VM to be up
+                    rtn = waitForSomeStuffToHappen([label: "Start vm ${opts.server?.name}", timeout: (5l * 60l * 1000l)]) {
+                        response = client.callJsonApi(
+                            connection.apiUrl,
+                            "/ovirt-engine/api/vms/${vmExternalId}".toString(),
+                            reqOptions,
+                            'GET'
+                        )
+                        return response.data.status == 'up'
+                    }
+                } else {
+                    // if its already started then just ignore
+                    rtn = ServiceResponse.success()
                 }
-            }
-            else {
-                // if its already started then just ignore
-                rtn = ServiceResponse.success()
             }
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
         return rtn
     }
 
     static stopVm(opts) {
-        def rtn
-        Connection connection = opts.connection
-        def closeConnection = false
+        ServiceResponse rtn
+        Map connection = opts.connection
+        HttpApiClient client
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
-                closeConnection = true
+                connection = getToken(opts.cloud)
             }
-            def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
-            vmService.stop().send()
+            def headers = getAuthenticatedBaseHeaders(connection)
+            headers['Content-Type'] = 'application/json'
+            client = getApiClient(connection)
+            def postBody = [async:true]
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+            def vmExternalId = opts.server?.externalId ?: opts.vmId
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/vms/${vmExternalId}/stop".toString(),
+                postReqOptions,
+                'POST'
+            )
 
-            // wait for the VM to be up
-            rtn = waitForSomeStuffToHappen([label:"Start vm ${opts.server?.name}", timeout:(5l * 60l * 1000l)]) {
-                return vmService.get().send().vm().status() == VmStatus.DOWN
+            if (response.success) {
+                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+                // wait for the VM to be down
+                rtn = waitForSomeStuffToHappen([label: "Start vm ${opts.server?.name}", timeout: (5l * 60l * 1000l)]) {
+                    response = client.callJsonApi(
+                        connection.apiUrl,
+                        "/ovirt-engine/api/vms/${vmExternalId}".toString(),
+                        reqOptions,
+                        'GET'
+                    )
+                    return response.data.status == 'down'
+                }
+            }
+            else {
+                rtn = ServiceResponse.error("Failed to stop vm: ${extractErrorMessage(response.data)}")
             }
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
         return rtn
     }
 
     static addNetworkInterface(opts) {
-        def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
-        try {
-            def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
-
-            // Locate the service that manages the NICs of the virtual machine:
-            def nicsService = vmService.nicsService()
-
-            // Use the "add" method of the nics service to add the disk:
-            def nic = nicsService.add()
-                .nic(
-                    nic()
-                    .name(opts.deviceName)
-                    .vnicProfile(
-                        vnicProfile()
-                        .id(opts.networkId)
-                    )
-                )
-                .send().nic()
-
-            rtn.success = true
-            rtn.data = nic
-        }
-        catch (Throwable t) {
-            log.error("Unable to add network interface: ${t.message}", t)
-            rtn.error = "Unable to add network interface: ${t.message}"
-        }
-        finally {
-            if (closeConnection)
-                connection?.close()
-        }
-        return rtn
+        return addNicsToVm([
+            connection:opts.connection,
+            vmId:opts.server?.externalId ?: opts.vmId,
+            nics:[
+                [name:opts.deviceName, network:[externalId:opts.networkId]]
+            ]
+        ])
     }
 
     static deleteNetworkInterface(opts) {
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         try {
-            def vmService = connection.systemService().vmsService().vmService(opts.server?.externalId ?: opts.vmId)
-            def nicService = vmService.nicsService().nicService(opts.nicId)
-            nicService.remove().send()
+            def headers = getAuthenticatedBaseHeaders(connection)
+            client = getApiClient(connection)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/vms/${opts.server?.externalId ?: opts.vmId}/nics/${opts.nicId}".toString(),
+                reqOptions,
+                'DELETE'
+            )
+
+            if (!response.success) {
+                throw new RuntimeException("Unable to remove vm network interface ${opts.nicId}: ${extractErrorMessage(response.data)}")
+            }
         }
         catch (Throwable t) {
             log.error("Unable to delete network interface ${opts.nicId}: ${t.message}", t)
             rtn.error = "Unable to delete network interface ${opts.nicId}: ${t.message}"
+        }
+        finally {
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -879,7 +1027,7 @@ class OlvmComputeUtility {
                 sleep(1000l * 10l)
                 def resp = getServerDetail(opts)
                 def serverDetail = resp.data
-                if(resp.success == true && serverDetail.status == 'UP') {
+                if(resp.success == true && serverDetail.status == 'up') {
                     if (serverDetail.ipV4.size() > 0) {
                         rtn.success = true
                         rtn.data = serverDetail
@@ -907,7 +1055,7 @@ class OlvmComputeUtility {
             def externalId = opts.server?.externalId ?: opts.serverId
             if(externalId) {
                 def headers = getAuthenticatedBaseHeaders(connection)
-                client = new HttpApiClient()
+                client = getApiClient(connection)
                 def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
                 def response = client.callJsonApi(
                     connection.apiUrl,
@@ -1014,30 +1162,40 @@ class OlvmComputeUtility {
 
     static updateDiskSize(opts) {
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
-                closeConnection = true
+                connection = getToken(opts.cloud)
             }
 
-            def diskService = connection.systemService().disksService().diskService(opts.disk.id)
-            def cloudDisk = diskService.get().send().disk()
+            def headers = getAuthenticatedBaseHeaders(connection)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            client = getApiClient(connection)
+            def cloudDisk = client.callJsonApi(connection.apiUrl, "/ovirt-engine/api/disks/${opts.disk.id}", reqOptions, 'GET').data
 
             // cannot down size a disk, so only run if its sizing up
-            if (cloudDisk.provisionedSize() < opts.disk.size) {
-                def updateResponse = diskService.update().disk(
-                    disk()
-                    .id(opts.disk.id)
-                    .provisionedSize(opts.disk.size)
-                ).send()
+            if (cloudDisk['provisioned_size']?.toLong() < opts.disk.size) {
+                def putHeaders = getAuthenticatedBaseHeaders(connection)
+                def putBody = [id:opts.disk.id, 'provisioned_size':opts.disk.size]
+                def putReqOptions = new HttpApiClient.RequestOptions(headers:putHeaders, body:putBody, ignoreSSL:true)
+                def updateResponse = client.callJsonApi(
+                    connection.apiUrl,
+                    cloudDisk.href,
+                    putReqOptions,
+                    'PUT'
+                )
+
+                if (!updateResponse.success) {
+                    throw new RuntimeException("Unable to resize disk ${cloudDisk.name}: ${updateResponse.data?.success}")
+                }
 
                 // wait for the disk update to complete
                 waitForSomeStuffToHappen([label: "Resize disk ${opts.disk.id}"]) {
                     // need to wait for disk status before we move on
                     log.debug("checking status on disk ${opts.disk.id}")
-                    return diskService.get().send().disk().status() == DiskStatus.OK
+                    def d = client.callJsonApi(connection.apiUrl, cloudDisk.href, reqOptions, 'GET').data
+                    return d.status == 'ok'
                 }
             }
             rtn.success = true
@@ -1047,21 +1205,18 @@ class OlvmComputeUtility {
             rtn.error = "Unable to resize disk: ${t.message}"
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client.shutdownClient()
         }
         return rtn
     }
 
     static addDisksToVm(opts) {
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
         def vmId = opts.vm?.id ?: opts.vmId
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
-                closeConnection = true
+                connection = getToken(opts.cloud)
             }
 
             def attachedDisks = []
@@ -1082,57 +1237,79 @@ class OlvmComputeUtility {
             log.error("Failed to add disks to vm ${vmId}:${t.message}", t)
             rtn.error = "Failed to add disks to vm ${vmId}:${t.message}"
         }
-        finally {
-            if (closeConnection)
-                connection?.close()
-        }
         return rtn
     }
 
     static addDiskToVm(opts) {
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         def vmId = opts.vm?.id ?: opts.vmId
         try {
             if (!connection) {
                 connection = getConnection(opts.cloud)
-                closeConnection = true
             }
 
-            // Locate the service that manages the disk attachments of the virtual machine:
-            def diskAttachmentsService = connection.systemService().vmsService().vmService(vmId).diskAttachmentsService()
+            def headers = getAuthenticatedBaseHeaders(connection)
+            client = getApiClient(connection)
 
-            def diskAttachment = diskAttachmentsService.add()
-                .attachment(
-                    diskAttachment()
-                        .disk(
-                            disk()
-                                .name(opts.disk.name)
-                                .description("Device ${opts.disk.deviceName}")
-                                .format(DiskFormat.COW)
-                                .provisionedSize(BigInteger.valueOf(opts.disk.maxStorage))
-                                .storageDomains(
-                                    storageDomain()
-                                        .id(opts.disk.datastore.externalId)
-                                )
-                        )
-                        .interface_(DiskInterface.VIRTIO)
-                        .bootable(false)
-                        .active(true)
-                )
-                .send()
-                .attachment()
+            // first create our disk
+            def postBody = [
+                name:opts.disk.name,
+                description:"Device ${opts.disk.deviceName}".toString(),
+                format:'cow',
+                'provisioned_size':BigInteger.valueOf(opts.disk.maxStorage),
+                'storage_domains':[
+                    'storage_domain':[[id:opts.disk.datastore.externalId]]
+                ]
+            ]
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                '/ovirt-engine/api/disks',
+                postReqOptions,
+                'POST'
+            )
+
+            if (!response.success) {
+                throw new RuntimeException("Failed to create disk ${opts.disk.name}: ${extractErrorMessage(response.data)}")
+            }
+
+            // wait for our disk to be created before we attach it to our vm
+            def newDisk = response.data
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            waitForSomeStuffToHappen([label:"Waiting for disk(${newDisk.id}) to be ready"]) {
+                def d = client.callJsonApi(connection.apiUrl, newDisk.href, reqOptions, 'GET').data
+                return d.status == 'ok'
+            }
+
+            // now attach the disk to the vm
+            postBody = [
+                bootable:false,
+                interface:'virtio',
+                active:true,
+                disk:[id:newDisk.id]
+            ]
+            postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+            response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/vms/${vmId}/diskattachments".toString(),
+                postReqOptions,
+                'POST'
+            )
+
+            if (!response.success) {
+                throw new RuntimeException("Failed to attach disk to vm: ${extractErrorMessage(response.data)}")
+            }
 
             // wait for disk to be OK
-            def diskId = diskAttachment.disk().id()
-            def diskService = connection.systemService().disksService().diskService(diskId)
-            waitForSomeStuffToHappen([label:"Waiting for disk(${diskId}) to be ready"]) {
-                return diskService.get().send().disk().status() == DiskStatus.OK
+            waitForSomeStuffToHappen([label:"Waiting for disk(${newDisk.id}) to be ready"]) {
+                def d = client.callJsonApi(connection.apiUrl, newDisk.href, reqOptions, 'GET').data
+                return d.status == 'ok'
             }
 
             // once disk has been added, set new disk id to return object
-            opts.disk.externalId = diskId
+            opts.disk.externalId = newDisk.id
             rtn.success = true
             rtn.data = opts.disk
         }
@@ -1140,33 +1317,50 @@ class OlvmComputeUtility {
             log.error("Unable to add disk to vm: ${t.message}", t)
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
         return rtn
     }
 
     static detachVolume(opts) {
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         def vmId = opts.vm?.id ?: opts.vmId
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
-                closeConnection = true
+                connection = getToken(opts.cloud)
             }
 
-            def vmService = connection.systemService().vmsService().vmService(vmId)
-            def vm = vmService.get().send().vm()
+            def headers = getAuthenticatedBaseHeaders(connection)
+            def queryParams = [follow:'diskattachments']
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            client = getApiClient(connection)
+
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/vms/${vmId}".toString(),
+                reqOptions,
+                'GET'
+            )
 
             // find our disk attachment
-            def attachment = connection.followLink(vm.diskAttachments()).find { attachment ->
-                return attachment.disk().id() == opts.volumeId
+            def attachment = response.data['disk_attachments']['disk_attachment'].find { attachment ->
+                return attachment.disk.id == opts.volumeId
             }
 
-            def diskAttachmentService = vmService.diskAttachmentsService().attachmentService(attachment.id())
-            diskAttachmentService.remove().detachOnly(true).send()
+            // detach the disk from our vm
+            queryParams = ['detach_only':'true']
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
+            response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/vms/${vmId}/diskattachments/${attachment.id}".toString(),
+                postReqOptions,
+                'DELETE'
+            )
+
+            if (!response.success)
+                throw new RuntimeException("Failed to detailed disk ${attachment.id}: ${extractErrorMessage(response.data)}")
 
             rtn.success = true
         }
@@ -1175,24 +1369,33 @@ class OlvmComputeUtility {
             rtn.error = "Unable to detach volume ${opts.volumeId}: ${t.message}"
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
         return rtn
     }
 
     static deleteVolume(opts) {
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
-                closeConnection = true
+                connection = getToken(opts.cloud)
             }
 
-            def diskService = connection.systemService().disksService().diskService(opts.volumeId)
-            diskService.remove().send()
+            def headers = getAuthenticatedBaseHeaders(connection)
+            client = getApiClient(connection)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/disks/${opts.volumeId}".toString(),
+                reqOptions,
+                'DELETE'
+            )
+
+            if (!response.success)
+                throw new RuntimeException("Failed to remove disk ${opts.volumeId}: ${extractErrorMessage(response.data)}")
+
             rtn.success = true
         }
         catch (Throwable t) {
@@ -1200,8 +1403,7 @@ class OlvmComputeUtility {
             rtn.error = "Unable to remove volume ${opts.volumeId}"
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -1241,70 +1443,97 @@ class OlvmComputeUtility {
 
     static updateVmProperties(opts) {
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         def vmId = opts.vm?.id ?: opts.vmId
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
-                closeConnection = true
+                connection = getToken(opts.cloud)
             }
+            def postHeaders = getAuthenticatedBaseHeaders(connection)
+            def postBody = [:]
+            client = getApiClient(connection)
 
             def vmService = connection.systemService().vmsService().vmService(opts.vm.id)
             def vmBuilder = vm().id(opts.vmId)
 
             if (opts.vm.name)
-                vmBuilder.name(opts.vm.name)
+                postBody.name = opts.vm.name
 
             if (opts.vm.memory)
-                vmBuilder.memory(opts.vm.memory.toLong())
+                postBody.memory = opts.vm.memory.toLong()
 
             if (opts.vm.maxCores)
-                vmBuilder.cpu(buildCpus(opts.vm))
+                postBody.cpu = buildCpus(opts.vm)
 
-            vmService.update().vm(vmBuilder).send()
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:postBody, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/vms/${vmId}".toString(),
+                postReqOptions,
+                'PUT'
+            )
 
+            if (!response.success) {
+                throw new RuntimeException("Failed to update vm ${vmId}: ${extractErrorMessage(response.data)}")
+            }
+
+            def reqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, ignoreSSL:true)
+            def vm
             waitForSomeStuffToHappen([label:"waiting for vm (${opts.vm.id}) to save"]) {
-                return vmService.get().send().vm().status() != VmStatus.SAVING_STATE
+                vm = client.callJsonApi(
+                    connection.apiUrl,
+                    "/ovirt-engine/api/vms/${vmId}".toString(),
+                    reqOptions,
+                    'GET'
+                ).data
+                return vm.status != 'saving_state'
             }
 
             rtn.success = true
-            rtn.data = vmService.get().send().vm()
+            rtn.data = vm
         }
         catch (Throwable t) {
             log.error("Unable to update vm ${opts.vm.name}: ${t.message}", t)
             rtn.error = "Unable to update vm ${opts.vm.name}: ${t.message}"
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
     }
 
     static addNicsToVm(opts) {
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         def vmId = opts.vm?.id ?: opts.vmId
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
-                closeConnection = true
+                connection = getToken(opts.cloud)
             }
 
             // add all nics in opts.nics
-            def nicsService = connection.systemService().vmsService().vmService(vmId).nicsService()
+            client = getApiClient(connection)
+            def headers = getAuthenticatedBaseHeaders(connection)
 
             for (networkInterface in opts.nics) {
-                def addResponse = nicsService.add().nic(
-                    nic()
-                    .name(networkInterface.name)
-                    .vnicProfile(
-                        vnicProfile()
-                        .id(networkInterface.network.externalId)
-                    )
-                ).send()
-                networkInterface.externalId = addResponse.nic().id()
+                def postBody = [
+                    name:networkInterface.name,
+                    interface:'virtio',
+                    'vnic_profile':[id:networkInterface.network.externalId]
+                ]
+                def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+                def addResponse = client.callJsonApi(
+                    connection.apiUrl,
+                    "/ovirt-engine/api/vms/${vmId}/nics".toString(),
+                    postReqOptions,
+                    'POST'
+                )
+
+                if (!addResponse.success) {
+                    throw new RuntimeException("Failed to add nic ${networkInterface.name} to vm: ${extractErrorMessage(addResponse.data)}")
+                }
+                networkInterface.externalId = addResponse.data.id
             }
 
             rtn.success = true
@@ -1315,20 +1544,18 @@ class OlvmComputeUtility {
             rtn.error = "Unable to add network interfaces to vm: ${t.message}"
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
         return rtn
     }
 
     static deleteServer(opts, MorpheusContext ctx = null) {
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud, ctx)
-                closeConnection = true
+                connection = getToken(opts.cloud, ctx)
             }
 
             // first stop our vm
@@ -1336,13 +1563,19 @@ class OlvmComputeUtility {
             stopVm([connection:connection, vmId:vmId])
 
             // then remove vm
-            def vmService = connection.systemService().vmsService().vmService(vmId)
-            vmService.remove().send()
-            rtn.success = true
+            client = getApiClient(connection)
+            def headers = getAuthenticatedBaseHeaders(connection)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/vms/${vmId}".toString(),
+                reqOptions,
+                'DELETE'
+            )
+            rtn.success = response.success
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -1467,36 +1700,36 @@ class OlvmComputeUtility {
     }
 
     static waitForServerExists(opts) {
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         if (!connection) {
-            connection = getConnection(opts.cloud)
-            closeConnection = true
+            connection = getToken(opts.cloud)
         }
         try {
-            def vmService = connection.systemService().vmsService().vmService(opts.server.externalId)
+            def headers = getAuthenticatedBaseHeaders(connection)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            client = getApiClient(connection)
 
             // first wait for the vm to unlock
             waitForSomeStuffToHappen([label: "Create vm ${opts.server.name}"]) {
                 // we need to wait till our vm status is equal to DOWN so we know it has finished creating
-                def status = vmService.get().send().vm().status()
-                log.debug("VM ${opts.server.name}(${opts.server.externalId}) status is ${status.value()}")
-                return status == VmStatus.DOWN
+                def vm = client.callJsonApi(connection.apiUrl, "/ovirt-engine/api/vms/${opts.server.externalId}".toString(), reqOptions, 'GET').data
+                log.debug("VM ${opts.server.name}(${opts.server.externalId}) status is ${vm.status}")
+                return vm.status == 'down'
             }
 
             // then wait for each disk to be unlocked
-            def diskAttachments = vmService.diskAttachmentsService().list().send().attachments()
-            for (attachment in diskAttachments) {
-                waitForSomeStuffToHappen([label:"Disk status for ${attachment.disk()?.name()}"]) {
-                    def myDisk = connection.followLink(attachment.disk())
-                    log.debug("Disk ${myDisk.name()}() status is ${myDisk.status()}")
-                    return myDisk.status() == DiskStatus.OK
+            def diskAttachments = client.callJsonApi(connection.apiUrl, "/ovirt-engine/api/vms/${opts.server.externalId}/diskattachments".toString(), reqOptions, 'GET').data
+            for (attachment in diskAttachments['disk_attachment']) {
+                waitForSomeStuffToHappen([label:"Disk status for ${attachment['logical_name']}"]) {
+                    def myDisk = client.callJsonApi(connection.apiUrl, attachment.disk.href, reqOptions, 'GET').data
+                    log.debug("Disk ${myDisk.name} status is ${myDisk.status}")
+                    return myDisk.status == 'ok'
                 }
             }
         }
         finally {
-            if (closeConnection)
-                connection.close()
+            client?.shutdownClient()
         }
     }
 
@@ -1507,7 +1740,7 @@ class OlvmComputeUtility {
         Map connection = getToken(cloud)
         HttpApiClient client = null
         try {
-            client = new HttpApiClient()
+            client = getApiClient(connection)
             def headers = getAuthenticatedBaseHeaders(connection)
             def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
             def resp = client.callJsonApi(
@@ -1558,29 +1791,28 @@ class OlvmComputeUtility {
         return rtn
     }
 
-    static List<Nic> buildNetworkInterfaces(List interfaces) {
+    static List<Map> buildNetworkInterfaces(List interfaces) {
         def nics = []
         for (iface in interfaces) {
-            nics << buildNetworkInterface(iface).build()
+            nics << buildNetworkInterface(iface)
         }
         return nics
     }
 
-    static NicBuilder buildNetworkInterface(opts) {
-        return nic()
-            .name(opts.name)
-            .vnicProfile(
-                vnicProfile()
-                .id(opts.externalId ?: opts.networkId)
-                )
+    static Map buildNetworkInterface(opts) {
+        return [
+            name:opts.name,
+            'vnic_profile':[id:opts.externalId ?: opts.networkId]
+        ]
     }
 
-    static CpuBuilder buildCpus(Map opts) {
-        return cpu().topology(
-            cpuTopology()
-                .cores(opts.maxCores.toInteger())
-                .sockets(opts.coresPerSocket?.toInteger() ?: 1)
-        )
+    static Map buildCpus(Map opts) {
+        return [
+            topology:[
+                cores:opts.maxCores.toInteger(),
+                sockets:opts.coresPerSocket?.toInteger() ?: 1
+            ]
+        ]
     }
 
     static getOsTypeCode(String olvmCode) {
@@ -1630,22 +1862,27 @@ class OlvmComputeUtility {
             config.apiProxy = cloud.apiProxy
         }
 
-        HttpApiClient client = new HttpApiClient()
-        def headers = ['Content-Type':'application/x-www-form-urlencoded', 'Accept':'application/json']
-        def body = "grant_type=password&scope=ovirt-app-api&username=${URLEncoder.encode(config.serviceUsername, 'UTF-8')}&password=${URLEncoder.encode(config.servicePassword, 'UTF-8')}".toString()
-        HttpApiClient.RequestOptions reqOptions = new HttpApiClient.RequestOptions(headers:headers, body:body, ignoreSSL:true)
-        def resp = client.callJsonApi(
-            extractRootURL(config.endpointUrl),
-            '/ovirt-engine/sso/oauth/token',
-            reqOptions,
-            'POST'
-        )
+        HttpApiClient client
+        try {
+            client = getApiClient(config)
+            def headers = ['Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json']
+            def body = "grant_type=password&scope=ovirt-app-api&username=${URLEncoder.encode(config.serviceUsername, 'UTF-8')}&password=${URLEncoder.encode(config.servicePassword, 'UTF-8')}".toString()
+            HttpApiClient.RequestOptions reqOptions = new HttpApiClient.RequestOptions(headers: headers, body: body, ignoreSSL: true)
+            def resp = client.callJsonApi(
+                extractRootURL(config.endpointUrl),
+                '/ovirt-engine/sso/oauth/token',
+                reqOptions,
+                'POST'
+            )
 
-        if (resp.success) {
-            return [apiUrl:extractRootURL(config.endpointUrl), token:resp.data['access_token']]
+            if (resp.success) {
+                return [apiUrl: extractRootURL(config.endpointUrl), token: resp.data['access_token']]
+            } else {
+                throw new RuntimeException("Failed to authenticate to OLVM environment: ${extractErrorMessage(resp.data)}")
+            }
         }
-        else {
-            throw new RuntimeException("Failed to authenticate to OLVM environment: ${resp.data?.fault?.message} - ${resp.data?.fault?.detail}")
+        finally {
+            client?.shutdownClient()
         }
     }
 
@@ -1669,13 +1906,6 @@ class OlvmComputeUtility {
     }
 
     static Connection getConnection(Map details) {
-        if (details.apiProxy && !proxySelectorConfigured) {
-            enableProxy(details.endpointUrl, details.apiProxy.proxyHost, details.apiProxy.proxyPort)
-        }
-        else if (!details.apiProxy && proxySelectorConfigured) {
-            disableProxy()
-        }
-
         def connectionBuilder = connection()
             .url(details.endpointUrl)
             .user(details.serviceUsername)
@@ -1689,52 +1919,24 @@ class OlvmComputeUtility {
         return "/dev/vd${BLOCK_DEVICE_LIST[index]}".toString()
     }
 
-    private static enableProxy(String endpoint, String proxyHost, Integer proxyPort) {
-        Proxy httpProxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort))
-        URI proxyUri = new URI(endpoint)
-        ProxySelector.setDefault(new ProxySelector() {
-            @Override
-            List<Proxy> select(URI uri) {
-                def proxyList
-                if (uri.host == proxyUri.host)
-                    proxyList = Collections.singletonList(httpProxy)
-                return proxyList ?: []
-            }
-
-            @Override
-            void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
-                log.error("Unable to connect to ${uri.toString()} via proxy ${sa.toString()}")
-            }
-        })
-        proxySelectorConfigured = true
+    static HttpApiClient getApiClient(Map config) {
+        return new HttpApiClient(networkProxy:config.apiProxy)
     }
 
-    private static disableProxy() {
-        List<Proxy> empty = new ArrayList<Proxy>()
-        ProxySelector.setDefault(new ProxySelector() {
-            @Override
-            List<Proxy> select(URI uri) {
-                return empty
-            }
-
-            @Override
-            void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
-                log.info("Should never happen with proxy disabled")
-            }
-        })
-        proxySelectorConfigured = false
+    static getAuthenticatedBaseHeaders(String token) {
+        return [Authorization:"Bearer ${token}".toString(), Accept:'application/json', 'Content-Type':'application/json']
     }
 
-    private static getAuthenticatedBaseHeaders(String token) {
-        return [Authorization:"Bearer ${token}".toString(), Accept:'application/json']
-    }
-
-    private static getAuthenticatedBaseHeaders(Map connection) {
+    static getAuthenticatedBaseHeaders(Map connection) {
         return getAuthenticatedBaseHeaders(connection.token)
     }
 
-    private static String extractErrorMessage(resp) {
-        return "${resp?.fault?.message} - ${resp?.fault?.detail}".toString()
+    static String extractErrorMessage(resp) {
+        if (resp?.fault)
+            return "${resp?.fault.message} - ${resp?.faul?.detail}".toString()
+        else
+            return "${resp?.message} - ${resp?.detail}".toString()
+
     }
 
     private static String extractRootURL(String urlString) {

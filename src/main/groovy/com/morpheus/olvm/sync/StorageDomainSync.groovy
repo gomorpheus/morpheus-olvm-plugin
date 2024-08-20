@@ -130,7 +130,7 @@ class StorageDomainSync {
                     save = true
                 }
             }
-            if (existingItem.online != (masterItem.externalStatus == 'ok')) {
+            if (existingItem.online != (masterItem['external_status'] == 'ok')) {
                 existingItem.online = !existingItem.online
                 save = true
             }

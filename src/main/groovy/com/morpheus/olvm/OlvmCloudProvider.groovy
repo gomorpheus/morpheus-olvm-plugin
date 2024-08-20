@@ -198,6 +198,25 @@ class OlvmCloudProvider implements CloudProvider {
 			hasCidr:true,
 			optionTypes:[]
 		)
+		networks << new NetworkType(
+			code:'olvm-vnic-profile',
+			name:'OLVM VNIC Profile',
+			overlay:false,
+			creatable:false,
+			nameEditable:false,
+			cidrEditable:false,
+			dhcpServerEditable:false,
+			dnsEditable:false,
+			gatewayEditable:false,
+			ipv6Editable:false,
+			vlanIdEditable:false,
+			cidrRequired:true,
+			canAssignPool:false,
+			deletable:false,
+			hasNetworkServer:false,
+			hasCidr:true,
+			optionTypes:[]
+		)
 		return networks
 	}
 

@@ -37,7 +37,7 @@ class NetworkSync {
             if (!this.@connection)
                 this.@connection = OlvmComputeUtility.getToken(cloud)
 
-            def olvmNetworks = OlvmComputeUtility.listNetworks([connection:connection]).data.profiles
+            def olvmNetworks = OlvmComputeUtility.listNetworks([connection:connection]).data.networks
             Observable<NetworkIdentityProjection> domainRecords = morpheusContext.async.network.listIdentityProjections(
                 new DataQuery().withFilters(
                     new DataFilter<String>('refType', 'ComputeZone'),
@@ -72,16 +72,17 @@ class NetworkSync {
     protected addMissingNetworks(List<Map> addItems) {
         def adds = []
         for (cloudItem in addItems) {
+            def networkTypeCode = cloudItem.type == 'network' ? 'olvm-logical-network' : 'olvm-vnic-profile'
             def networkType =
-                morpheusContext.async.network.type.search(new DataQuery().withFilter(new DataFilter<String>('code', 'olvm-logical-network'))).blockingGet().items?.first()
+                morpheusContext.async.network.type.search(new DataQuery().withFilter(new DataFilter<String>('code', networkTypeCode))).blockingGet().items?.first()
 
             def cidr = cloudItem.ip ? NetworkUtility.networkToCidr(cloudItem.ip, cloudItem.netMask) : '0.0.0.0/1'
 
             // Check to see if network belongs to a data center
             def datacenter
-            if (cloudItem['data_center']) {
+            if (cloudItem.datacenterId) {
                 def datacenters =
-                    morpheusContext.async.cloud.pool.search(new DataQuery().withFilter(new DataFilter<String>('externalId', cloudItem['data_center'].id))).blockingGet()
+                    morpheusContext.async.cloud.pool.search(new DataQuery().withFilter(new DataFilter<String>('externalId', cloudItem.datacenterId))).blockingGet()
                 datacenter = datacenters.items?.first()
             }
 
@@ -93,13 +94,13 @@ class NetworkSync {
                 code:"olvm.plugin.network.${cloud.id}.${cloudItem.id}",
                 uniqueId:cloudItem.id,
                 externalId:cloudItem.id,
-                externalType: 'subnet',
-                type: networkType,
+                externalType:cloudItem.type,
+                type:networkType,
                 refType:'ComputeZone',
                 refId:cloud.id,
                 cloudPool:datacenter,
                 description:cloudItem.description,
-                active:cloud.defaultNetworkSyncActive,
+                active:cloud.defaultNetworkSyncActive ? (cloudItem.provisionable) : false,
                 //active:network.statusPresent() ? network.status() == NetworkStatus.OPERATIONAL : true,
                 cidr:cidr,
                 dhcpServer:true,

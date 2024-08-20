@@ -13,6 +13,7 @@ import com.morpheusdata.core.providers.CloudProvider
 import com.morpheusdata.core.providers.VmProvisionProvider
 import com.morpheusdata.core.providers.WorkloadProvisionProvider
 import com.morpheusdata.core.util.ComputeUtility
+import com.morpheusdata.core.util.HttpApiClient
 import com.morpheusdata.core.util.MorpheusUtils
 import com.morpheusdata.model.Account
 import com.morpheusdata.model.Cloud
@@ -45,7 +46,6 @@ import com.morpheusdata.response.ProvisionResponse
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
 import org.ovirt.engine.sdk4.Connection
-import org.ovirt.engine.sdk4.internal.containers.TemplateContainer
 import org.ovirt.engine.sdk4.types.VmStatus
 
 @Slf4j
@@ -87,32 +87,26 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			resp.data.disableAutoUpdates = false
 		}
 
-		//lets figure out what image we are deploying
-		Connection connection
-		try {
-			connection = OlvmComputeUtility.getConnection(server.cloud, morpheus)
-			def imageType = workload.getConfigMap().imageType ?: 'default'
-			def virtualImage = getWorkloadImage(workload, opts)
-			def config = workload.configMap
-			if (virtualImage) {
-				//this ensures the image is set correctly for provisioning as it enters runWorkload
-				workload.server.sourceImage = virtualImage
-				VirtualImageLocation location = ensureVirtualImageLocation(connection, virtualImage, server.cloud)
-				resp.data.setVirtualImageLocation(location)
+		// lets figure out what image we are deploying
+		 Map connection = OlvmComputeUtility.getToken(server.cloud, morpheus)
+		 def imageType = workload.getConfigMap().imageType ?: 'default'
+		 def virtualImage = getWorkloadImage(workload, opts)
+		 def config = workload.configMap
+		 if (virtualImage) {
+			 //this ensures the image is set correctly for provisioning as it enters runWorkload
+			 workload.server.sourceImage = virtualImage
+			 VirtualImageLocation location = ensureVirtualImageLocation(connection, virtualImage, server.cloud)
+			 resp.data.setVirtualImageLocation(location)
 
-				if (virtualImage.osType?.name?.contains('ubuntu') && MorpheusUtils.compareVersions(virtualImage.osType?.osVersion, '16.04') >= 0) {
-					resp.data.disableAutoUpdates = true
-				}
-				resp.success = true
-			}
-			else {
-				resp.success = false
-				resp.msg = "Virtual Image not found"
-			}
-		}
-		finally {
-			connection?.close()
-		}
+			 if (virtualImage.osType?.name?.contains('ubuntu') && MorpheusUtils.compareVersions(virtualImage.osType?.osVersion, '16.04') >= 0) {
+				 resp.data.disableAutoUpdates = true
+			 }
+			 resp.success = true
+		 }
+		 else {
+			 resp.success = false
+			 resp.msg = "Virtual Image not found"
+		 }
 
 		return resp
 	}
@@ -556,7 +550,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		ServiceResponse<PrepareHostResponse> resp = new ServiceResponse<>()
 		resp.data = new PrepareHostResponse(computeServer: server, disableCloudInit: false, options: [sendIp: false])
 
-		Connection connection = OlvmComputeUtility.getConnection(cloud, morpheus)
+		Map connection = OlvmComputeUtility.getToken(cloud, morpheus)
 
 		try {
 			def layout = server?.layout
@@ -606,9 +600,6 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			resp.msg = "Error in prepareHost: ${e}"
 			log.error("${resp.msg}, ${e}", e)
 
-		}
-		finally {
-			connection?.close()
 		}
 		return resp
 	}
@@ -875,15 +866,13 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	@Override
 	ServiceResponse<ProvisionResponse> runWorkload(Workload workload, WorkloadRequest workloadRequest, Map opts) {
 		log.debug "runWorkload: ${workload} ${workloadRequest} ${opts}"
-		Connection connection = opts.connection
-		def closeConnection = false
+		Map connection = opts.connection
 		ProvisionResponse provisionResponse = new ProvisionResponse(success: true)
 		ComputeServer server = workload.server
 		try {
 			Cloud cloud = server.cloud
 			if (!connection) {
-				connection = OlvmComputeUtility.getConnection(cloud, morpheus)
-				closeConnection = true
+				connection = OlvmComputeUtility.getToken(cloud, morpheus)
 			}
 			VirtualImage virtualImage = server.sourceImage
 			def runConfig = buildWorkloadRunConfig(workload, workloadRequest, virtualImage, connection, opts)
@@ -899,10 +888,6 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			log.error("runWorkload error: ${t.message}", t)
 			provisionResponse.setError(t.message)
 			return new ServiceResponse(success: false, msg:t.message, error:t.message, data: provisionResponse)
-		}
-		finally {
-			if (closeConnection)
-				connection?.close()
 		}
 	}
 
@@ -932,19 +917,27 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 
 	private ServiceResponse internalResizeServer(ComputeServer server, ResizeRequest resizeRequest, Map opts) {
 		def rtn = [success:false, supported:true]
-		Connection connection = opts.connection
-		def closeConnection = false
+		Map connection = opts.connection
 		Cloud cloud = server.cloud
 		ServicePlan plan = resizeRequest.plan
+		HttpApiClient client
 		try {
 			if (!connection) {
-				connection = OlvmComputeUtility.getConnection(cloud, morpheus)
-				closeConnection = true
+				connection = OlvmComputeUtility.getToken(cloud, morpheus)
 			}
 			def serverId = server.id
+			client = OlvmComputeUtility.getApiClient(connection)
+			def headers = OlvmComputeUtility.getAuthenticatedBaseHeaders(connection)
+			def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
 
 			def statusResults = OlvmComputeUtility.waitForSomeStuffToHappen([label:"Waiting for vm to stop"]) {
-				return connection.systemService().vmsService().vmService(server.externalId).get().send().vm().status() == VmStatus.DOWN
+				def v = client.callJsonApi(
+					connection.apiUrl,
+					"/ovirt-engine/api/vms/${server.externalId}".toString(),
+					reqOptions,
+					'GET'
+				).data
+				return vm.status == 'down'
 			}
 
 			if(statusResults.success == true) {
@@ -1219,26 +1212,20 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		ProvisionResponse rtn = new ProvisionResponse()
 		def serverUuid = server.externalId
 		if(server && serverUuid) {
-			Connection connection
-			try {
-				connection = OlvmComputeUtility.getConnection(server.cloud, morpheus)
-				def serverDetails = OlvmComputeUtility.checkServerReady([connection:connection, server:server])
-				if (serverDetails.success && serverDetails.data) {
-					rtn.externalId = serverUuid
-					rtn.success = serverDetails.success
-					rtn.privateIp = serverDetails.data.ipV4?.first()
-					rtn.publicIp = rtn.privateIp
-					rtn.hostname = serverDetails.data.hostname
-					return ServiceResponse.success(rtn)
-				} else {
-					return ServiceResponse.error("Server not ready/does not exist")
-				}
-			}
-			finally {
-				if (connection)
-					connection?.close()
-			}
-		} else {
+			 Map connection = OlvmComputeUtility.getToken(server.cloud, morpheus)
+			 def serverDetails = OlvmComputeUtility.checkServerReady([connection:connection, server:server])
+			 if (serverDetails.success && serverDetails.data) {
+				 rtn.externalId = serverUuid
+				 rtn.success = serverDetails.success
+				 rtn.privateIp = serverDetails.data.ipV4?.first()
+				 rtn.publicIp = rtn.privateIp
+				 rtn.hostname = serverDetails.data.hostname
+				 return ServiceResponse.success(rtn)
+			 } else {
+				 return ServiceResponse.error("Server not ready/does not exist")
+			 }
+		}
+		else {
 			return ServiceResponse.error("Could not find server uuid")
 		}
 	}
@@ -1399,7 +1386,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		return rtn
 	}
 
-	protected VirtualImageLocation ensureVirtualImageLocation(Connection connection, VirtualImage virtualImage, Cloud cloud) {
+	protected VirtualImageLocation ensureVirtualImageLocation(Map connection, VirtualImage virtualImage, Cloud cloud) {
 		def rtn = virtualImage.imageLocations?.find{it.refType == 'ComputeZone' && it.refId == cloud.id}
 		if(!rtn) {
 			rtn = virtualImage.imageLocations?.find{it.refType == 'ComputeZone' && it.refId == cloud.id}
@@ -1414,10 +1401,10 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 				templateResults = OlvmComputeUtility.loadImage([connection: connection, imageId: virtualImage.externalId])
 			}
 			if (templateResults.success && templateResults.data.template) {
-				TemplateContainer template = templateResults.data.template
+				def template = templateResults.data.template
 				def newLocation = new VirtualImageLocation(
-					virtualImage: virtualImage, imageName: virtualImage.name, externalId: template.id(),
-					code: "olvm.plugin.template.${cloud.id}.${template.id()}",
+					virtualImage:virtualImage, imageName:virtualImage.name, externalId:template.id,
+					code: "olvm.plugin.template.${cloud.id}.${template.id}",
 					refType:'ComputeZone', refId:cloud.id
 				)
 				newLocation = morpheus.async.virtualImage.location.create(newLocation, cloud).blockingGet()
@@ -1427,15 +1414,12 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		return rtn
 	}
 
-	protected buildHostRunConfig(ComputeServer server, HostRequest hostRequest, VirtualImage virtualImage, Connection connection, Map opts) {
-
+	protected buildHostRunConfig(ComputeServer server, HostRequest hostRequest, VirtualImage virtualImage, Map connection, Map opts) {
 		Cloud cloud = server.cloud
 		StorageVolume rootVolume = server.volumes?.find{it.rootVolume == true}
 
-
 		def maxMemory = server.maxMemory
 		def maxStorage = rootVolume.getMaxStorage()
-
 		def serverConfig = server.getConfigMap()
 
 		def runConfig = [:] + opts + buildRunConfig(server, virtualImage, hostRequest.networkConfiguration, connection, serverConfig, opts)
@@ -1460,7 +1444,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		return runConfig
 	}
 
-	protected buildWorkloadRunConfig(Workload workload, WorkloadRequest workloadRequest, VirtualImage virtualImage, Connection connection, Map opts) {
+	protected buildWorkloadRunConfig(Workload workload, WorkloadRequest workloadRequest, VirtualImage virtualImage, Map connection, Map opts) {
 		log.debug("buildRunConfig: {}, {}, {}, {}", workload, workloadRequest, virtualImage, opts)
 		Map workloadConfig = workload.getConfigMap()
 		ComputeServer server = workload.server
@@ -1494,7 +1478,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		return runConfig
 	}
 
-	protected buildRunConfig(ComputeServer server, VirtualImage virtualImage, NetworkConfiguration networkConfiguration, Connection connection, config, Map opts) {
+	protected buildRunConfig(ComputeServer server, VirtualImage virtualImage, NetworkConfiguration networkConfiguration, Map connection, config, Map opts) {
 		log.debug("buildRunConfig: {}, {}, {}, {}, {}", server, virtualImage, networkConfiguration, config, opts)
 		Cloud cloud = server.cloud
 		def network = networkConfiguration.primaryInterface?.network
@@ -1742,9 +1726,13 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 				def rootVolume = server.volumes.find { it -> return it.rootVolume }
 				rootVolume.externalId = vmDetails.data.disks.find { d -> return d.bootable == true }.id
 				rootVolume = saveAndGetVolume(rootVolume)
-				OlvmComputeUtility.updateDiskSize([
+				def response = OlvmComputeUtility.updateDiskSize([
 					connection: runConfig.connection, disk: [id: rootVolume.externalId, size: rootVolume.maxStorage]
 				])
+
+				if (!response.success) {
+					throw new RuntimeException("Unable to update disk size: ${OlvmComputeUtility.extractErrorMessage(response.data)}")
+				}
 
 				// add data disks via cloud api, then save off disk ids
 				if (runConfig.dataDisks?.size() > 0) {

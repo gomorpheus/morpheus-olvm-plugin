@@ -519,7 +519,7 @@ class OlvmCloudProvider implements CloudProvider {
 	 */
 	@Override
 	ServiceResponse startServer(ComputeServer computeServer) {
-		def result = OlvmComputeUtility.startVm([cloud:computeServer.cloud, vmId:computeServer.externalId])
+		def result = OlvmComputeUtility.startVm([cloud:computeServer.cloud, vmId:computeServer.externalId, morpheusCtx:morpheus])
 		return new ServiceResponse(result.success, result.msg, null, null)
 	}
 
@@ -531,7 +531,7 @@ class OlvmCloudProvider implements CloudProvider {
 	 */
 	@Override
 	ServiceResponse stopServer(ComputeServer computeServer) {
-		def result = OlvmComputeUtility.startVm([cloud:computeServer.cloud, vmId:computeServer.externalId])
+		def result = OlvmComputeUtility.stopVm([cloud:computeServer.cloud, vmId:computeServer.externalId, morpheusCtx:morpheus])
 		return new ServiceResponse(result.success, result.msg, null, null)
 	}
 

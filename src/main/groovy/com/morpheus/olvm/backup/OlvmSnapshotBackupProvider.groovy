@@ -90,6 +90,16 @@ class OlvmSnapshotBackupProvider extends AbstractBackupTypeProvider {
         return false
     }
 
+    /**
+     * Determines if this backup type relies on a snapshot process. Snapshots are typically used for quick backups and
+     * are not designed for long-term storage. For long-term backup creation, additional processes, such as copy to store,
+     * should be utilized by providers that rely on snapshots.
+     */
+    @Override
+    Boolean isSnapshot() {
+        return true
+    }
+
     def getSnapshotsForBackupResult(backupSetId, containerId){
         ArrayList<Map> snapshots = new ArrayList<>()
         def backupResult = morpheus.async.backup.backupResult.list(

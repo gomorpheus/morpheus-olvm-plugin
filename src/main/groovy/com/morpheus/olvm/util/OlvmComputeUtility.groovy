@@ -873,7 +873,7 @@ class OlvmComputeUtility {
         HttpApiClient client
         try {
             if (!connection) {
-                connection = getToken(opts.cloud)
+                connection = getToken(opts.cloud, opts.morpheusCtx)
             }
             def headers = getAuthenticatedBaseHeaders(connection)
             client = getApiClient(connection)
@@ -929,7 +929,7 @@ class OlvmComputeUtility {
         HttpApiClient client
         try {
             if (!connection) {
-                connection = getToken(opts.cloud)
+                connection = getToken(opts.cloud, opts.morpheusCtx)
             }
             def headers = getAuthenticatedBaseHeaders(connection)
             headers['Content-Type'] = 'application/json'

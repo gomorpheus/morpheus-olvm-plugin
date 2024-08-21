@@ -1684,10 +1684,10 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			def cloneContainerId = opts.cloneContainerId
 			if(backupSetId && cloneContainerId) {
 				Map rootSnapshot
-				def snapshots = new OlvmSnapshotBackupProvider(plugin, morpheus).getSnapshotsForBackupResult(backupSetId, cloneContainerId)
-				log.debug("Snapshots: ${snapshots}")
-				if (snapshots) {
-					runConfig.restoreSnapshotId = snapshots.first().snapshotId
+				def snapshot = new OlvmSnapshotBackupProvider(plugin, morpheus).getSnapshotsForBackupResult(backupSetId, cloneContainerId)
+				log.debug("Snapshots: ${snapshot}")
+				if (snapshot) {
+					runConfig.restoreSnapshot = snapshot
 					createResults = OlvmComputeUtility.createServerFromSnapshot(runConfig)
 				}
 			}

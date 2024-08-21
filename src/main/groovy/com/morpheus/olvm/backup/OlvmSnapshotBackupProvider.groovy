@@ -121,6 +121,6 @@ class OlvmSnapshotBackupProvider extends AbstractBackupTypeProvider {
             }
         }
 
-        return snapshots
+        return [snapshotId:backupResult.configMap.snapshotId, disks:snapshots, vmId:backupResult.configMap.vmId]
     }
 }

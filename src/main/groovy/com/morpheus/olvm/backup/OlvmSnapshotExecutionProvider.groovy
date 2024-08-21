@@ -8,6 +8,7 @@ import com.morpheusdata.core.backup.response.BackupExecutionResponse
 import com.morpheusdata.core.backup.util.BackupStatusUtility
 import com.morpheusdata.core.util.ComputeUtility
 import com.morpheusdata.core.util.DateUtility
+import com.morpheusdata.core.util.HttpApiClient
 import com.morpheusdata.model.Backup
 import com.morpheusdata.model.BackupResult
 import com.morpheusdata.model.Cloud
@@ -16,9 +17,6 @@ import com.morpheusdata.model.projection.BackupResultIdentityProjection
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
 import io.reactivex.rxjava3.schedulers.Schedulers
-import org.ovirt.engine.sdk4.Connection
-import org.ovirt.engine.sdk4.internal.containers.SnapshotContainer
-import org.ovirt.engine.sdk4.types.SnapshotStatus
 
 @Slf4j
 class OlvmSnapshotExecutionProvider implements BackupExecutionProvider {
@@ -140,8 +138,8 @@ class OlvmSnapshotExecutionProvider implements BackupExecutionProvider {
                     def volumeSize = disk.provisionedSize.toLong()
                     targetArchive << result.snapshot.snapshotId
                     snapshotDisks << [
-                        volumeId:disk.id, snapshotId:result.snapshot.snapshotId, volumeSize:volumeSize, sizeInMb:(volumeSize / ComputeUtility.ONE_MEGABYTE),
-                        deviceName:disk.name
+                        volumeId:disk.id, imageId:disk.imageId, snapshotId:result.snapshot.snapshotId, volumeSize:volumeSize,
+                        storageDomainId:disk.storageDomainId, sizeInMb:(volumeSize / ComputeUtility.ONE_MEGABYTE), deviceName:disk.name
                     ]
                 }
                 rtn.data.backupResult.zoneId
@@ -149,6 +147,7 @@ class OlvmSnapshotExecutionProvider implements BackupExecutionProvider {
                 rtn.data.backupResult.resultArchive = targetArchive.join(",")
                 rtn.data.backupResult.sizeInMb = totalSize / ComputeUtility.ONE_MEGABYTE
                 rtn.data.backupResult.setConfigProperty("snapshots", snapshotDisks)
+                rtn.data.backupResult.setConfigProperty("snapshotId", result.snapshot.snapshotId)
                 rtn.data.backupResult.setConfigProperty("vmId", vmId)
                 rtn.data.updates = true
             } else {
@@ -193,8 +192,8 @@ class OlvmSnapshotExecutionProvider implements BackupExecutionProvider {
                 def opts = [vmId:server.externalId, snapshotId:snapshotId, cloud:cloud]
                 def snapshotResults = OlvmComputeUtility.getSnapshot(opts, morpheus)
                 if(snapshotResults.success == true) {
-                    SnapshotContainer snapshot = snapshotResults.data
-                    if(snapshot.snapshotStatus() == SnapshotStatus.OK) {
+                    def snapshot = snapshotResults.data
+                    if(snapshot['snapshot_status'] == 'ok') {
                         completeCount++
                     }
                 }
@@ -247,41 +246,12 @@ class OlvmSnapshotExecutionProvider implements BackupExecutionProvider {
         return rtn
     }
 
-    protected getVolumesForVm(vmId, Cloud cloud, Connection connection = null){
-        def disks = []
-        def closeConnection = false
-        try {
-            if (!connection) {
-                connection = OlvmComputeUtility.getConnection(cloud)
-                closeConnection = true
-            }
-            def vmService = connection.systemService().vmsService().vmService(vmId)
-            for (diskAttachment in vmService.diskAttachmentsService().list().send().attachments()) {
-                def disk = connection.followLink(diskAttachment.disk())
-                disks << [
-                    name           : disk.name(),
-                    id             : disk.id(),
-                    status         : disk.status().toString(),
-                    size           : disk.provisionedSize(),
-                    bootable       : diskAttachment.bootable(),
-                    storageDomainId: disk.storageDomain()?.id()
-                ]
-            }
-        }
-        finally {
-            if (closeConnection)
-                connection.close()
-        }
-        return disks
-    }
-
-    protected createSnapshot(vmId, Cloud cloud, Connection connection = null) {
+    protected createSnapshot(vmId, Cloud cloud, Map connection = null) {
         def rtn = [:]
-        def closeConnection = false
+        HttpApiClient client
         try {
             if (!connection) {
-                connection = OlvmComputeUtility.getConnection(cloud, morpheus)
-                closeConnection = true
+                connection = OlvmComputeUtility.getToken(cloud, morpheus)
             }
             log.debug("createSnapshot: ${vmId}")
             def snapShotResult = OlvmComputeUtility.snapshotVm([
@@ -294,47 +264,64 @@ class OlvmSnapshotExecutionProvider implements BackupExecutionProvider {
             rtn.disks = []
 
             // grab all the disk info for the VM snapshot
-            def snapshotService = connection.systemService().vmsService().vmService(vmId).snapshotsService().snapshotService(rtn.snapshotId)
+            def headers = OlvmComputeUtility.getAuthenticatedBaseHeaders(connection)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            client = OlvmComputeUtility.getApiClient(connection)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "${snapshot.href}/disks",
+                reqOptions,
+                'GET'
+            )
 
-            for (disk in snapshotService.disksService().list().send().disks()) {
+            for (disk in response.data?['disk']) {
                 rtn.disks << [
-                    id:disk.id(),
-                    name:disk.name(),
-                    provisionedSize:disk.provisionedSize()
+                    id:disk.id,
+                    imageId:disk['image_id'],
+                    storageDomainId:disk['storage_domains']['storage_domain'].first().id,
+                    name:disk.name,
+                    provisionedSize:disk['provisioned_size'].toLong()
                 ]
-                rtn.totalSize += disk.provisionedSize()
+                rtn.totalSize += disk['provisioned_size'].toLong()
             }
 
             rtn.success = true
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
-
         return rtn
     }
 
-    protected deleteSnapshot(String vmId, String snapshotId, Cloud cloud, Connection connection = null) {
+    protected deleteSnapshot(String vmId, String snapshotId, Cloud cloud, Map connection = null) {
         def rtn = ServiceResponse.success()
-        def closeConnection = false
+        HttpApiClient client
         try {
             if (!connection) {
-                connection = OlvmComputeUtility.getConnection(cloud, morpheus)
-                closeConnection = true
+                connection = OlvmComputeUtility.getToken(cloud, morpheus)
+            }
+            def headers = OlvmComputeUtility.getAuthenticatedBaseHeaders(connection)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            client = OlvmComputeUtility.getApiClient(connection)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/vms/${vmId}/snapshots/${snapshotId}".toString(),
+                reqOptions,
+                'DELETE'
+            )
+
+            if (!response.success && response.errorCode != '404') {
+                throw new RuntimeException("Failed to delete snapshot ${snapshotId}: ${OlvmComputeUtility.extractErrorMessage(response.data)}")
             }
 
-            def snapshotService = connection.systemService().vmsService().vmService(vmId).snapshotsService().snapshotService(snapshotId)
-            snapshotService.remove().send()
             log.debug("deleted snapshot ${snapshotId}")
         }
-        catch (Exception ex) {
+        catch (Throwable t) {
             rtn.success = false
-            log.error("Failed to delete snapshot ${snapshotId}", ex)
+            log.error("Failed to delete snapshot ${snapshotId}: ${t.message}", t)
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
         return rtn
     }

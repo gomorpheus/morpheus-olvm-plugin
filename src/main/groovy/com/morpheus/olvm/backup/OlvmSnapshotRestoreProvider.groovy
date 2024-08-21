@@ -15,7 +15,6 @@ import com.morpheusdata.model.Instance
 import com.morpheusdata.model.Workload
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
-import org.ovirt.engine.sdk4.Connection
 
 @Slf4j
 class OlvmSnapshotRestoreProvider implements BackupRestoreProvider{
@@ -52,16 +51,16 @@ class OlvmSnapshotRestoreProvider implements BackupRestoreProvider{
     ServiceResponse<BackupRestoreResponse> restoreBackup(BackupRestore backupRestore, BackupResult backupResult, Backup backup, Map opts) {
         ServiceResponse<BackupRestoreResponse> rtn = ServiceResponse.prepare(new BackupRestoreResponse(backupRestore))
         log.debug("restoreBackup {}, opts {}", backupResult, opts)
-        Connection connection = null
         try {
             Workload workload = morpheus.async.workload.get(opts.containerId).blockingGet()
             ComputeServer server = workload.server
             Cloud cloud = server.cloud
-            connection = OlvmComputeUtility.getConnection(cloud, morpheus)
+            Map connection = OlvmComputeUtility.getToken(cloud, morpheus)
             def vmId = server?.externalId
             def backupResultConfig = backupResult.getConfigMap()
-            def snapshotId = backupResultConfig.snapshots?.collect{ it.snapshotId }.first()
-            def restoreResult = OlvmComputeUtility.restoreSnapshot([vmId:vmId, snapshotId:snapshotId, connection:connection])
+            def restoreResult = OlvmComputeUtility.restoreSnapshot(
+                [vmId:vmId, snapshotId:backupResultConfig.snapshotId, disks:backupResultConfig.snapshots, connection:connection]
+            )
 
             if (restoreResult.success) {
                 // start vm
@@ -71,16 +70,14 @@ class OlvmSnapshotRestoreProvider implements BackupRestoreProvider{
                 rtn.success = true
                 rtn.data.backupRestore.status = BackupStatusUtility.SUCCEEDED
             }
-        } catch(e) {
-            log.error("restoreBackup: ${e}", e)
-            rtn.success = false
-            rtn.msg = e.getMessage()
-            rtn.data.updates = true
-            rtn.data.backupRestore.errorMessage = e.getMessage()
-            rtn.data.backupRestore.status = BackupStatusUtility.FAILED
         }
-        finally {
-            connection?.close()
+        catch(Throwable t) {
+            log.error("restoreBackup: ${t.message}", t)
+            rtn.success = false
+            rtn.msg = t.message
+            rtn.data.updates = true
+            rtn.data.backupRestore.errorMessage = t.message
+            rtn.data.backupRestore.status = BackupStatusUtility.FAILED
         }
 
         return rtn
@@ -94,7 +91,7 @@ class OlvmSnapshotRestoreProvider implements BackupRestoreProvider{
         return rtn
     }
 
-    def updateInstanceIp(Long morphServerId, String olvmInstanceId, Connection connection = null) {
+    def updateInstanceIp(Long morphServerId, String olvmInstanceId, Map connection = null) {
         log.debug("updateInstanceIp: {}, {}", morphServerId, olvmInstanceId)
         try {
             def morphServer = morpheus.async.computeServer.get(morphServerId).blockingGet()

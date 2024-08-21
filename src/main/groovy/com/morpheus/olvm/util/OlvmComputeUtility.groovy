@@ -5,26 +5,14 @@ import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.util.HttpApiClient
 import com.morpheusdata.core.util.image.Qcow2InputStream
 import com.morpheusdata.model.Cloud
-import com.morpheusdata.model.ComputeServerInterface
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
-import org.ovirt.engine.sdk4.Connection
-import org.ovirt.engine.sdk4.internal.containers.SnapshotContainer
-import org.ovirt.engine.sdk4.types.SnapshotStatus
-import org.ovirt.engine.sdk4.types.VmStatus
 
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import java.security.cert.X509Certificate
-
-import static org.ovirt.engine.sdk4.ConnectionBuilder.connection
-import static org.ovirt.engine.sdk4.builders.Builders.cluster
-import static org.ovirt.engine.sdk4.builders.Builders.snapshot
-import static org.ovirt.engine.sdk4.builders.Builders.template
-import static org.ovirt.engine.sdk4.builders.Builders.vm
-import static org.ovirt.engine.sdk4.builders.Builders.vnicProfile
 
 @Slf4j
 class OlvmComputeUtility {
@@ -633,7 +621,6 @@ class OlvmComputeUtility {
     }
 
     static pushDataToTarget(Qcow2InputStream inputStream, URL url, Map con, Long contentLength = null) {
-    //static pushDataToTarget(InputStream inputStream, URL url, Connection con) {
         HttpURLConnection connection
         try {
             // Install the all-trusting trust manager
@@ -777,42 +764,46 @@ class OlvmComputeUtility {
     static createServerFromSnapshot(opts) {
         log.debug("createServer opts: ${opts}")
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         try {
             if (!connection) {
-                connection getConnection(opts.cloud)
-                closeConnection = true
+                connection getToken(opts.cloud)
             }
-            def imageRef = opts.imageRef
+            def snapInfo = opts.restoreSnapshot
+            client = getApiClient(connection)
+            def headers = getAuthenticatedBaseHeaders(connection)
+            def postBody = [
+                name:opts.name,
+                cluster:[id:opts.clusterRef],
+                snapshots:[snapshot:[[id:snapInfo.snapshotId instanceof List ? snapInfo.snapshotId.first() : snapInfo.snapshotId]]],
+                cpu:buildCpus(opts.workloadConfig),
+                memory:opts.maxMemory,
+                description:"From snapshot ${snapInfo.snapshotId}",
+            ]
+            // create the list of disks we need for our creation
+            def snapDisks = []
+            for (disk in snapInfo.disks) {
+                snapDisks << [
+                    id:disk.volumeId
+                ]
+            }
+            postBody['disk_attachments'] = [
+                'disk_attachment':snapDisks
+            ]
 
-            // grab api services we will need for vm creation
-            def vmsService = connection.systemService().vmsService()
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                '/ovirt-engine/api/vms',
+                postReqOptions,
+                'POST'
+            )
 
-            // send vm create to api
-            def response = vmsService.add()
-                .vm(
-                    vm()
-                    .name(opts.name)
-                    .cluster(
-                        cluster()
-                        .id(opts.clusterRef)
-                    )
-                    .template(
-                        template()
-                        .id(imageRef)
-                    )
-                    .cpu(
-                        buildCpus(opts.workloadConfig)
-                    )
-                    .memory(opts.maxMemory)
-                    .snapshots(
-                        snapshot()
-                        .id(opts.restoreSnapshotId)
-                    )
-                )
-                .send()
-            def vmId = response.vm().id()
+            if (!response.success)
+                throw new RuntimeException("Failed to create vm from snapshot ${snapInfo.id}: ${extractErrorMessage(response.data)}")
+
+            def vmId = response.data.id
             rtn.data = [vmId:vmId]
             rtn.success = true
         }
@@ -821,8 +812,7 @@ class OlvmComputeUtility {
             log.error("Failed to provision vm ${opts.name}: ${t.message}")
         }
         finally {
-            if (closeConnection)
-                connection.close()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -1406,39 +1396,6 @@ class OlvmComputeUtility {
         return rtn
     }
 
-    static addNicToVm(opts) {
-        def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
-        def vmId = opts.vm?.id ?: opts.vmId
-        try {
-            if (!connection) {
-                connection = getConnection(opts.cloud)
-                closeConnection = true
-            }
-            def nicsService = connection.systemService().vmsService().vmService(vmId).nicsService()
-            ComputeServerInterface nic = opts.nic
-            nicsService.add().nic(
-                nic()
-                .name(nic.name)
-                .vnicProfile(
-                    vnicProfile()
-                    .id(nic.network.externalId)
-                )
-            ).send()
-            rtn.success = true
-        }
-        catch (Throwable t) {
-            log.error("Unable to add network interface: ${t.message}", t)
-            rtn.error = "Unable to add network interface: ${t.message}"
-        }
-        finally {
-            if (closeConnection)
-                connection?.close()
-        }
-        return rtn
-    }
-
     static updateVmProperties(opts) {
         def rtn = ServiceResponse.prepare()
         Map connection = opts.connection
@@ -1451,9 +1408,6 @@ class OlvmComputeUtility {
             def postHeaders = getAuthenticatedBaseHeaders(connection)
             def postBody = [:]
             client = getApiClient(connection)
-
-            def vmService = connection.systemService().vmsService().vmService(opts.vm.id)
-            def vmBuilder = vm().id(opts.vmId)
 
             if (opts.vm.name)
                 postBody.name = opts.vm.name
@@ -1580,25 +1534,42 @@ class OlvmComputeUtility {
 
     static snapshotVm(opts) {
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
-                closeConnection = true
+                connection = getToken(opts.cloud)
             }
+            def headers = getAuthenticatedBaseHeaders(connection)
+            def postBody = [
+                description:opts.description ?: 'A morpheus initiated snapshot'
+            ]
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+            client = getApiClient(connection)
 
-            def snapshotsService = connection.systemService().vmsService().vmService(opts.vmId).snapshotsService()
-            SnapshotContainer snap = snapshotsService.add().snapshot(
-                snapshot()
-                .description(opts.description ?: 'A morpheus initiated snapshot')
-            ).send().snapshot()
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/vms/${opts.vmId}/snapshots".toString(),
+                postReqOptions,
+                'POST'
+            )
 
-            def snapshotService = snapshotsService.snapshotService(snap.id())
-            waitForSomeStuffToHappen([label:"Waiting for snapshot(${snap.id()}) to be ready"]) {
-                return snapshotService.get().send().snapshot().snapshotStatus() == SnapshotStatus.OK
+            if (!response.success)
+                throw new RuntimeException("Failed to create snapshot for vm ${opts.vmId}: ${extractErrorMessage(response.data)}")
+
+            // now wait for our snapshot to complete
+            def snapshot = response.data
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            waitForSomeStuffToHappen([label:"Waiting for snapshot(${snapshot.id}) to be ready"]) {
+                def s = client.callJsonApi(
+                    connection.apiUrl,
+                    snapshot.href,
+                    reqOptions,
+                    'GET'
+                ).data
+                return s['snapshot_status'] == 'ok'
             }
-            rtn.data = [id:snap.id(), status:SnapshotStatus.OK.value()]
+            rtn.data = [id:snapshot.id, href:snapshot.href, status:'ok']
             rtn.success = true
         }
         catch (Throwable t) {
@@ -1606,24 +1577,33 @@ class OlvmComputeUtility {
             rtn.error = "Error creating snapshot for vm (${opts.vmId}): ${t.message}"
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
         return rtn
     }
 
     static getSnapshot(opts, MorpheusContext ctx = null) {
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud, ctx)
-                closeConnection = true
+                connection = getToken(opts.cloud, ctx)
             }
-            def snapshotService = connection.systemService().vmsService().vmService(opts.vmId).snapshotsService().snapshotService(opts.snapshotId)
-            def snap = snapshotService.get().send().snapshot()
-            rtn.data = snap
+            client = getApiClient(connection)
+            def headers = getAuthenticatedBaseHeaders(connection)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/vms/${opts.vmId}/snapshots/${opts.snapshotId}".toString(),
+                reqOptions,
+                'GET'
+            )
+
+            if (!response.success)
+                throw new RuntimeException("Failed to get snapshot ${opts.snapshotId}: ${extractErrorMessage(response.data)}")
+
+            rtn.data = response.data
             rtn.success = true
         }
         catch (Throwable t) {
@@ -1631,31 +1611,57 @@ class OlvmComputeUtility {
             rtn.error = "Unable to get snapshot info for ${opts.snapshotId}: ${t.message}"
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
         return rtn
     }
 
     static restoreSnapshot(opts) {
         def rtn = ServiceResponse.prepare()
-        Connection connection = opts.connection
-        def closeConnection = false
+        Map connection = opts.connection
+        HttpApiClient client
         try {
             if (!connection) {
-                connection = getConnection(opts.cloud)
+                connection = getToken(opts.cloud)
                 opts.connection = connection
-                closeConnection = true
             }
 
             // stop the vm before restoring
             stopVm(opts)
-            def vmService = connection.systemService().vmsService().vmService(opts.vmId)
-            def snapshotService = vmService.snapshotsService().snapshotService(opts.snapshotId)
-            snapshotService.restore().send()
 
+            // perform the restore
+            def headers = getAuthenticatedBaseHeaders(connection)
+            client = getApiClient(connection)
+
+            // create the list of disks we are adding to the snapshot restore
+            def disks = []
+            for (disk in opts.disks) {
+                disks << [
+                    id:disk.volumeId,
+                    'image_id':disk.imageId
+                ]
+            }
+            def postBody = [disks:[disk:disks]]
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                "/ovirt-engine/api/vms/${opts.vmId}/snapshots/${opts.snapshotId}/restore".toString(),
+                postReqOptions,
+                'POST'
+            )
+
+            if (!response.success)
+                throw new RuntimeException("Failed to restore snapshot ${opts.snapshotId}: ${extractErrorMessage(response.data)}")
+
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
             waitForSomeStuffToHappen([label:"Waiting for vm restore(${opts.vmId}) to be ready"]) {
-                return vmService.get().send().vm().status() != VmStatus.IMAGE_LOCKED
+                def v = client.callJsonApi(
+                    connection.apiUrl,
+                    "/ovirt-engine/api/vms/${opts.vmId}".toString(),
+                    reqOptions,
+                    'GET'
+                ).data
+                return v.status != 'image_locked'
             }
             rtn.success = true
         }
@@ -1664,8 +1670,7 @@ class OlvmComputeUtility {
             rtn.error = "Unable to restore snapshot(${opts.snapshotId}): ${t.message}"
         }
         finally {
-            if (closeConnection)
-                connection?.close()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -1901,16 +1906,6 @@ class OlvmComputeUtility {
         }
 
         return getConnection(config)
-    }
-
-    static Connection getConnection(Map details) {
-        def connectionBuilder = connection()
-            .url(details.endpointUrl)
-            .user(details.serviceUsername)
-            .password(details.servicePassword)
-            .insecure(true)
-
-        return connectionBuilder.build()
     }
 
     static getDeviceName(Integer index) {

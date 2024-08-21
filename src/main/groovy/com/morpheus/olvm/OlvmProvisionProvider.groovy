@@ -932,7 +932,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 					reqOptions,
 					'GET'
 				).data
-				return vm.status == 'down'
+				return v.status == 'down'
 			}
 
 			if(statusResults.success == true) {

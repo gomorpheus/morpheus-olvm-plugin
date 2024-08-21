@@ -1276,6 +1276,7 @@ class OlvmComputeUtility {
                 bootable:false,
                 interface:'virtio',
                 active:true,
+                'logical_name':opts.disk.deviceName ?: '',
                 disk:[id:newDisk.id]
             ]
             postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
@@ -1322,7 +1323,7 @@ class OlvmComputeUtility {
 
             def headers = getAuthenticatedBaseHeaders(connection)
             def queryParams = [follow:'diskattachments']
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
             client = getApiClient(connection)
 
             def response = client.callJsonApi(

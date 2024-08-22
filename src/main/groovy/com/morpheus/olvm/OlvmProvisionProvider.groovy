@@ -158,6 +158,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			fieldName:'cloudDatacenterId',
 			fieldContext:'config',
 			fieldLabel:'Datacenter',
+			fieldClass:'option-source-hidden',
 			inputType:OptionType.InputType.HIDDEN,
 			displayOrder:1000,
 			optionSource:'olvmCloudConfiguredDatacenter'

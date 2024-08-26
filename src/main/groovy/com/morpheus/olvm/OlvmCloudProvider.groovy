@@ -2,6 +2,7 @@ package com.morpheus.olvm
 
 import com.morpheus.olvm.sync.ClusterSync
 import com.morpheus.olvm.sync.DatacenterSync
+import com.morpheus.olvm.sync.HostSync
 import com.morpheus.olvm.sync.NetworkSync
 import com.morpheus.olvm.sync.StorageDomainSync
 import com.morpheus.olvm.sync.TemplateSync
@@ -303,6 +304,61 @@ class OlvmCloudProvider implements CloudProvider {
 			provisionTypeCode:OlvmProvisionProvider.PROVISION_PROVIDER_CODE,
 			guestVm:true
 		)
+		serverTypes << new ComputeServerType(
+			name:'OLVM Hypervisor',
+			code:'olvm-hypervisor',
+			nodeType:'olvm-hypervisor',
+			description:'An OLVM KVM Host',
+			reconfigureSupported:false,
+			hasAutomation:false,
+			enabled:true,
+			selectable:false,
+			externalDelete:false,
+			managed:false,
+			controlPower:false,
+			controlSuspend:false,
+			creatable:false,
+			containerHypervisor:false,
+			bareMetalHost:false,
+			vmHypervisor:true,
+			agentType:null,
+			platform:PlatformType.linux,
+			provisionTypeCode:OlvmProvisionProvider.PROVISION_PROVIDER_CODE,
+			guestVm:false
+		)
+		serverTypes << new ComputeServerType(
+			name:'OLVM Kubernetes Master',
+			code:'olvm-kube-master',
+			description:'OLVM Kubernetes Master',
+			containerHypervisor:true,
+			reconfigureSupported:true,
+			hasAutomation:true,
+			supportsConsoleKeymap:true,
+			platform:PlatformType.linux,
+			managed:true,
+			provisionTypeCode:OlvmProvisionProvider.PROVISION_PROVIDER_CODE,
+			agentType:ComputeServerType.AgentType.host,
+			clusterType:ComputeServerType.ClusterType.kubernetes,
+			computeTypeCode:'kube-master',
+			nodeType:'kube-master'
+		)
+		serverTypes << new ComputeServerType(
+			name:'OLVM Kubernetes Worker',
+			code:'olvm-kube-worker',
+			description:'OLVM Kubernetes Worker',
+			containerHypervisor:true,
+			reconfigureSupported:true,
+			hasAutomation:true,
+			supportsConsoleKeymap:true,
+			platform:PlatformType.linux,
+			managed:true,
+			provisionTypeCode:OlvmProvisionProvider.PROVISION_PROVIDER_CODE,
+			agentType:ComputeServerType.AgentType.host,
+			clusterType:ComputeServerType.ClusterType.kubernetes,
+			computeTypeCode:'kube-worker',
+			nodeType:'kube-worker'
+		)
+
 		return serverTypes
 	}
 
@@ -404,6 +460,9 @@ class OlvmCloudProvider implements CloudProvider {
 				now = new Date().time
 				new NetworkSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
 				log.info("${cloudInfo.name}: Networks Synced in ${new Date().time - now}ms")
+				now = new Date().time
+				new HostSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
+				log.info("${cloudInfo.name}: Hosts Synced in ${new Date().time - now}ms")
 				now = new Date().time
 				new TemplateSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
 				log.info("${cloudInfo.name}: Templates Synced in ${new Date().time - now}ms")

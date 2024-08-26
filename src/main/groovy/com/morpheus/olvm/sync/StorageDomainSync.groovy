@@ -70,7 +70,7 @@ class StorageDomainSync {
     protected addMissingStorageDomains(List<Map> addItems) {
         def adds = []
         for (cloudItem in addItems) {
-            // Check to see if network belongs to a data center
+            // Check to see if storage domain belongs to a data center
             def datacenter
             if (cloudItem['data_centers']?['data_center']) {
                 def cloudDatacenter = cloudItem['data_centers']['data_center'].first()
@@ -98,7 +98,7 @@ class StorageDomainSync {
                 active      : cloud.defaultDatastoreSyncActive
             ]
             Datastore add = new Datastore(datastoreConfig)
-            add.assignedZonePools = [datacenter]
+            //add.assignedZonePools = [datacenter]
             adds << add
 
         }

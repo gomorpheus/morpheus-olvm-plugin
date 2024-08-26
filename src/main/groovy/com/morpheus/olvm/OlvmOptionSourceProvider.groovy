@@ -195,6 +195,9 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
     private static getCloudId(args) {
         args = args instanceof Object[] ? args[0] : args
         def cloudId = args.cloudId ?: args.zoneId // ?: args.domain?.id
+        if (!cloudId && args.domain) {
+            cloudId = args.domain.cloudId ?: args.domain.zoneId ?: args.domain.zone?.id
+        }
         cloudId ? cloudId.toLong() : null
     }
 }

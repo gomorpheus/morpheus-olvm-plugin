@@ -74,7 +74,12 @@ class VirtualMachineSync {
         for (vm in vms) {
             def vmDetails = OlvmComputeUtility.getServerDetail([connection:connection, serverId:vm.id]).data
             def servicePlan = SyncUtils.findServicePlanBySizing(allServicePlans, vmDetails.memory, vmDetails.cores, vmDetails.sockets, fallbackPlan)
-            def zonePool = morpheusContext.async.cloud.pool.find(new DataQuery().withFilter('externalId', vmDetails.clusterId)).blockingGet()
+            def zonePool = morpheusContext.async.cloud.pool.find(
+                new DataQuery().withFilters(
+                    new DataFilter('externalId', vmDetails.clusterId),
+                    new DataFilter('zone.id', cloud.id)
+                )
+            ).blockingGet()
             def osType = vm.os?.type
             def primaryIp = vmDetails.ipV4 ? vmDetails.ipV4.first() : ''
             ComputeServer add = new ComputeServer(
@@ -122,7 +127,12 @@ class VirtualMachineSync {
                     def vmDetails = OlvmComputeUtility.getServerDetail([connection:connection, serverId:cloudItem.id]).data
                     def save = false
                     def powerState = cloudItem.status == 'up' ? ComputeServer.PowerState.on : ComputeServer.PowerState.off
-                    def zonePool = morpheusContext.async.cloud.pool.find(new DataQuery().withFilter('externalId', vmDetails.clusterId)).blockingGet()
+                    def zonePool = morpheusContext.async.cloud.pool.find(
+                        new DataQuery().withFilters(
+                            new DataFilter('externalId', vmDetails.clusterId),
+                            new DataFilter('zone.id', cloud.id)
+                        )
+                    ).blockingGet()
 
                     if (cloudItem.name != currentServer.name) {
                         currentServer.name = cloudItem.name

@@ -181,6 +181,35 @@ class OlvmComputeUtility {
         return rtn
     }
 
+    static listHosts(opts) {
+        ServiceResponse rtn = ServiceResponse.prepare()
+        HttpApiClient client
+        try {
+            Map connection = opts.connection
+            if (!connection) {
+                connection = getToken(opts.cloud)
+            }
+            def headers = getAuthenticatedBaseHeaders(connection)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            client = getApiClient(connection)
+            def response = client.callJsonApi(
+                connection.apiUrl,
+                '/ovirt-engine/api/hosts',
+                reqOptions,
+                'GET'
+            )
+
+            if (!response.success)
+                throw new RuntimeException("Failed to get OLVM hosts: ${extractErrorMessage(response.data)}")
+
+            rtn.data = [hosts:response.data['host'] ?: [], connection:connection]
+            rtn.success = true
+        }
+        finally {
+            client?.shutdownClient()
+        }
+        return rtn
+    }
     static listNetworks(opts) {
         ServiceResponse rtn = ServiceResponse.prepare()
         HttpApiClient client = null

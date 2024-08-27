@@ -144,7 +144,7 @@ resource "instance-type-layout" "olvm-centos-8-single" {
 	hasAutoScale = true
 	portCount = 1
 	serverType = "vm"
-	enabled = true
+	enabled = false
 	creatable = true
 	supportsConvertToManaged = true
 	containers = [
@@ -228,7 +228,7 @@ resource "instance-type-layout" "olvm-centos-7_9-single" {
 	hasAutoScale = true
 	portCount = 1
 	serverType = "vm"
-	enabled = true
+	enabled = false
 	creatable = true
 	supportsConvertToManaged = true
 	containers = [

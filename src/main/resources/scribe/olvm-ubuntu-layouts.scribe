@@ -2,7 +2,7 @@
 resource "virtual-image" "olvm-image-morpheus-ubuntu-22_04" {
 	code = "olvm.plugin.image.morpheus.ubuntu.22.04.amd64"
 	category = "olvm.plugin.image.morpheus.ubuntu"
-	name = "Morpheus Ubuntu 22.04"
+	name = "Morpheus Ubuntu 22.04 20240418"
 	imageType = "qcow2"
 	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/ubuntu/ubuntu-22_04-amd64/morpheus-ubuntu-22_04-amd64-20240418.qcow2"
 	imagePath = "olvm/ubuntu/ubuntu-22_04-amd64"
@@ -86,7 +86,7 @@ resource "scale-action" "olvm-ubuntu-22_04-single" {
 resource "virtual-image" "olvm-image-morpheus-ubuntu-20_04" {
 	code = "olvm.plugin.image.morpheus.ubuntu.20.04.amd64"
 	category = "olvm.plugin.image.morpheus.ubuntu"
-	name = "Morpheus Ubuntu 20.04"
+	name = "Morpheus Ubuntu 20.04 20240304"
 	imageType = "qcow2"
 	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/ubuntu/ubuntu-20_04_4-v2-amd64/morpheus-ubuntu-20_04-amd64-20240304.qcow2"
 	imagePath = "olvm/ubuntu/ubuntu-20_04_4-v2-amd64"
@@ -170,7 +170,7 @@ resource "scale-action" "olvm-ubuntu-20_04-single" {
 resource "virtual-image" "olvm-image-morpheus-ubuntu-18_04" {
 	code = "olvm.plugin.image.morpheus.ubuntu.18.04.amd64"
 	category = "olvm.plugin.image.morpheus.ubuntu"
-	name = "Morpheus Ubuntu 18.04"
+	name = "Morpheus Ubuntu 18.04 20240304"
 	imageType = "qcow2"
 	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/ubuntu/ubuntu-18_04_2-v1-amd64/morpheus-ubuntu-18_04-amd64-20240304.qcow2"
 	imagePath = "olvm/ubuntu/ubuntu-18_04_2-v1-amd64"

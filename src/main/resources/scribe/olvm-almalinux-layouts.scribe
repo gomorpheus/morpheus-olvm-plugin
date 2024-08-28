@@ -2,7 +2,7 @@
 resource "virtual-image" "olvm-image-morpheus-almalinux-9" {
 	code = "olvm.plugin.image.morpheus.almalinux.9.amd64"
 	category = "olvm.plugin.image.morpheus.almalinux"
-	name = "Morpheus Almalinux 9"
+	name = "Morpheus Almalinux 9 20240418"
 	imageType = "qcow2"
 	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/almalinux/almalinux-9/morpheus-almalinux-9-x86_64-20240418.qcow2"
 	imagePath = "olvm/almalinux/almalinux-9"

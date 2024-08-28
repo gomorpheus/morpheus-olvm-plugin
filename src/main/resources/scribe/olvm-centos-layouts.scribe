@@ -2,7 +2,7 @@
 resource "virtual-image" "olvm-image-morpheus-centos-9" {
 	code = "olvm.plugin.image.morpheus.centos.9.amd64"
 	category = "olvm.plugin.image.morpheus.centos"
-	name = "Morpheus CentOS 9-Stream"
+	name = "Morpheus CentOS 9-Stream 20240418"
 	imageType = "qcow2"
 	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/centos/centos-9-stream/morpheus-oracle-9-stream-x86_64-20240418.qcow2"
 	imagePath = "olvm/centos/centos-9-stream"
@@ -86,7 +86,7 @@ resource "scale-action" "olvm-centos-9-single" {
 resource "virtual-image" "olvm-image-morpheus-centos-8" {
 	code = "olvm.plugin.image.morpheus.centos.8.amd64"
 	category = "olvm.plugin.image.morpheus.centos"
-	name = "Morpheus CentOS 8-Stream"
+	name = "Morpheus CentOS 8-Stream 20240418"
 	imageType = "qcow2"
 	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/centos/centos-8-stream/morpheus-oracle-8-x86_64-20240418.qcow2"
 	imagePath = "olvm/centos/centos-8-stream"
@@ -170,7 +170,7 @@ resource "scale-action" "olvm-centos-8-single" {
 resource "virtual-image" "olvm-image-morpheus-centos-7_9" {
 	code = "olvm.plugin.image.morpheus.centos.7.9.amd64"
 	category = "olvm.plugin.image.morpheus.centos"
-	name = "Morpheus CentOS 7.9"
+	name = "Morpheus CentOS 7.9 20240304"
 	imageType = "qcow2"
 	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/centos/centos-7_9/morpheus-centos-7_9-x86_64-20240304.qcow2"
 	imagePath = "olvm/centos/centos-7_9"

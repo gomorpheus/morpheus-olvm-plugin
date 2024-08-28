@@ -2,7 +2,7 @@
 resource "virtual-image" "olvm-image-morpheus-debian-12" {
 	code = "olvm.plugin.image.morpheus.debian.12.amd64"
 	category = "olvm.plugin.image.morpheus.debian"
-	name = "Morpheus Debian 12"
+	name = "Morpheus Debian 12 20240418"
 	imageType = "qcow2"
 	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/debian/debian-12/morpheus-debian-12-amd64-20240418.qcow2"
 	imagePath = "olvm/debian/debian-12"
@@ -87,7 +87,7 @@ resource "scale-action" "olvm-debian-12-single" {
 resource "virtual-image" "olvm-image-morpheus-debian-11" {
 	code = "olvm.plugin.image.morpheus.debian.11.amd64"
 	category = "olvm.plugin.image.morpheus.debian"
-	name = "Morpheus Debian 11"
+	name = "Morpheus Debian 11 20240304"
 	imageType = "qcow2"
 	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/debian/debian-11/morpheus-debian-11-amd64-20240304.qcow2"
 	imagePath = "olvm/debian/debian-11"
@@ -171,7 +171,7 @@ resource "scale-action" "olvm-debian-11-single" {
 resource "virtual-image" "olvm-image-morpheus-debian-10" {
 	code = "olvm.plugin.image.morpheus.debian.10.amd64"
 	category = "olvm.plugin.image.morpheus.debian"
-	name = "Morpheus Debian 10"
+	name = "Morpheus Debian 10 20240418"
 	imageType = "qcow2"
 	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/debian/debian-10/morpheus-debian-10-amd64-20240418.qcow2"
 	imagePath = "olvm/debian/debian-10"

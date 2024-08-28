@@ -2,7 +2,7 @@
 resource "virtual-image" "olvm-image-morpheus-rocky-9" {
 	code = "olvm.plugin.image.morpheus.rocky.9.amd64"
 	category = "olvm.plugin.image.morpheus.rocky"
-	name = "Morpheus Rocky Linux 9"
+	name = "Morpheus Rocky Linux 9 20240418"
 	imageType = "qcow2"
 	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/rocky/rocky-9/morpheus-rocky-9-x86_64-20240418.qcow2"
 	imagePath = "olvm/rocky/rocky-9"
@@ -86,7 +86,7 @@ resource "scale-action" "olvm-rocky-9-single" {
 resource "virtual-image" "olvm-image-morpheus-rocky-8" {
 	code = "olvm.plugin.image.morpheus.rocky.8.amd64"
 	category = "olvm.plugin.image.morpheus.rocky"
-	name = "Morpheus Rocky Linux 8"
+	name = "Morpheus Rocky Linux 8 20240418"
 	imageType = "qcow2"
 	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/rocky/rocky-8/morpheus-rocky-8-x86_64-20240418.qcow2"
 	imagePath = "olvm/rocky/rocky-8"

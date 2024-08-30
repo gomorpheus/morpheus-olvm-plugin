@@ -42,7 +42,12 @@ class VirtualMachineSync {
                     connection = OlvmComputeUtility.getConnection(cloud)
 
                 def olvmVms = OlvmComputeUtility.listVirtualMachines([connection:connection]).data.vms
-                Observable<ComputeServerIdentityProjection> domainRecords = morpheusContext.async.computeServer.listIdentityProjections(cloud.id, null)
+                Observable<ComputeServerIdentityProjection> domainRecords = morpheusContext.async.computeServer.listIdentityProjections(
+                    new DataQuery().withFilters(
+                        new DataFilter('zone.id', cloud.id),
+                        new DataFilter('computeServerType.code', '!=', 'olvm-hypervisor')
+                    )
+                )
 
                 SyncTask<ComputeServerIdentityProjection, Map, ComputeServer> syncTask = new SyncTask<>(domainRecords, olvmVms)
                 syncTask.addMatchFunction { ComputeServerIdentityProjection existingItem, Map cloudItem ->

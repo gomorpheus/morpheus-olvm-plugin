@@ -88,7 +88,6 @@ class StorageDomainSync {
                 cloud       : cloud,
                 storageSize : availableSpace && committedSpace ? availableSpace + committedSpace : 0l,
                 freeSpace   : availableSpace ?: 0l,
-                zonePool    : datacenter,
                 type        : type,
                 category    : "olvm.plugin.datastore.${cloud.id}",
                 drsEnabled  : false,
@@ -134,6 +133,13 @@ class StorageDomainSync {
                 existingItem.online = !existingItem.online
                 save = true
             }
+
+            // fixing unnecessary association
+            if (existingItem.zonePool) {
+                existingItem.zonePool = null
+                save = true
+            }
+
             if (save)
                 updates << existingItem
         }

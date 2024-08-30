@@ -1,3 +1,87 @@
+// ubuntu 24
+resource "virtual-image" "olvm-image-morpheus-ubuntu-24_04" {
+	code = "olvm.plugin.image.morpheus.ubuntu.24.04.amd64"
+	category = "olvm.plugin.image.morpheus.ubuntu"
+	name = "Morpheus Ubuntu 24.04 20240604"
+	imageType = "qcow2"
+	remotePath = "https://s3-us-west-1.amazonaws.com/morpheus-images/olvm/ubuntu/ubuntu-24_04-amd64/morpheus-ubuntu-24_04-amd64-20240604.qcow2"
+	imagePath = "olvm/ubuntu/ubuntu-24_04-amd64"
+	isCloudInit = true
+	systemImage = true
+	installAgent = true
+	osType {
+		code = "ubuntu.24.04.64"
+	}
+	zoneType = "olvm"
+}
+
+resource "workload-type" "olvm-ubuntu-24_04" {
+	code = "olvm-ubuntu-24.04"
+	shortName = "ubuntu"
+	name = "Ubuntu 24.04"
+	ports = [22]
+	containerVersion = "24.04"
+	entryPoint = ""
+	mountLogs = "/var/log"
+	statTypeCode = "vm"
+	logTypeCode = "ubuntu"
+	showServerLogs = true
+	category = "ubuntu"
+	cloneType = "ubuntu"
+	priorityOrder = 0
+	serverType = "vm"
+	providerType = "olvm"
+	containerPorts = [{code = "ubuntu.22"}]
+	actions = [{code = "ubuntu-remove-node"}]
+	checkTypeCode = "containerCheck"
+	virtualImage = virtual-image.olvm-image-morpheus-ubuntu-24_04
+	provisionType = "olvm-provision-standard"
+	backupType = "olvmSnapshot"
+}
+
+resource "workload-type-set" "olvm-ubuntu-24_04-set" {
+	code = "olvm-ubuntu-24.04-set"
+	containerType = workload-type.olvm-ubuntu-24_04
+	priorityOrder = 0
+	dynamicCount = true
+	containerCount = 1
+}
+
+resource "instance-type-layout" "olvm-ubuntu-24_04-single" {
+	code = "olvm-ubuntu-24.04-single"
+	name = "Ubuntu 24.04 VM"
+	sortOrder = 19
+	instanceVersion = "24.04"
+	description = "This will provision a single vm"
+	instanceType {
+		code = "ubuntu"
+	}
+	serverCount = 1
+	hasAutoScale = true
+	portCount = 1
+	serverType = "vm"
+	enabled = true
+	creatable = true
+	supportsConvertToManaged = true
+	containers = [
+		workload-type-set.olvm-ubuntu-24_04-set
+	]
+	actions = [{code = "ubuntu-add-node"}]
+	provisionType = "olvm-provision-standard"
+}
+
+resource "scale-action" "olvm-ubuntu-24_04-single" {
+	code = "olvm-ubuntu-24.04-single"
+	scaleType = "action"
+	layout = instance-type-layout.olvm-ubuntu-24_04-single
+	upAction {
+		code = "ubuntu-add-node"
+	}
+	downAction {
+		code = "ubuntu-remove-node"
+	}
+}
+
 // ubuntu 22
 resource "virtual-image" "olvm-image-morpheus-ubuntu-22_04" {
 	code = "olvm.plugin.image.morpheus.ubuntu.22.04.amd64"

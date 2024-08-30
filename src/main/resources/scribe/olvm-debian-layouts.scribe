@@ -60,7 +60,7 @@ resource "instance-type-layout" "olvm-debian-12-single" {
 	hasAutoScale = true
 	portCount = 1
 	serverType = "vm"
-	enabled = false
+	enabled = true
 	creatable = true
 	supportsConvertToManaged = true
 	containers = [

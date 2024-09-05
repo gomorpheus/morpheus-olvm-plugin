@@ -95,7 +95,7 @@ jar {
 				'Morpheus-Logo-Dark': 'assets/OLVM-140.svg',
 				'Morpheus-Labels': 'plugin cloud',
 				'Morpheus-Repo': 'https://github.com/gomorpheus/morpheus-olvm-plugin',
-				'Morpheus-Min-Appliance-Version': "7.0.2"
+				'Morpheus-Min-Appliance-Version': "7.0.6"
 		)
 	}
 }

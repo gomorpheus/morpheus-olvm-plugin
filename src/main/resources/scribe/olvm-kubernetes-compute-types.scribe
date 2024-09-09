@@ -1,6 +1,6 @@
 resource "compute-type-layout" "kubernetes-1_30-ubuntu-22_04-olvm-amd64-single" {
   code = "kubernetes-1_30-ubuntu-22_04-olvm-amd64-single"
-  enabled = false
+  enabled = true
   name = "MKS Kubernetes 1.30 Cluster on Ubuntu 22.04"
   sortOrder = 0
   computeVersion = "22.04"

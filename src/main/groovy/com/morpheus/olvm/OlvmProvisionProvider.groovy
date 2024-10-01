@@ -216,6 +216,18 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			optionSource:'olvmQcowImages'
 		])
 		nodeOptions << new OptionType([
+			name:'osType',
+			code:'olvm-node-osType',
+			fieldName:'osType.id',
+			fieldCode: 'gomorpheus.label.osType',
+			fieldContext:'domain',
+			fieldLabel:'OsType',
+			inputType:OptionType.InputType.SELECT,
+			displayOrder:99,
+			required:false,
+			optionSource:'osTypes'
+		])
+		nodeOptions << new OptionType([
 			name:'mountLogs',
 			code:'olvm-node-log-folder',
 			fieldName:'mountLogs',

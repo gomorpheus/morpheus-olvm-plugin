@@ -558,7 +558,10 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			def imageType = config.templateTypeSelect ?: 'default'
 			VirtualImage virtualImage
 
-			if(layout && typeSet) {
+			if(server.sourceImage){
+				virtualImage = server.sourceImage
+				ensureVirtualImageLocation(connection, virtualImage, cloud)
+			} else if(layout && typeSet) {
 				Long computeTypeSetId = server.typeSet?.id
 				if(computeTypeSetId) {
 					ComputeTypeSet computeTypeSet = morpheus.services.computeTypeSet.get(computeTypeSetId)

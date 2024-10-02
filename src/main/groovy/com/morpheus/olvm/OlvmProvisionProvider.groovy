@@ -1368,7 +1368,9 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		VirtualImage rtn
 		def containerConfig = workload.getConfigMap()
 		def imageType = containerConfig.imageType ?: 'default'
-		if(imageType == 'private' && containerConfig.imageId) {
+        if(opts.config?.imageId){
+            rtn = morpheus.async.virtualImage.get(opts.config.imageId as Long).blockingGet()
+        } else if(imageType == 'private' && containerConfig.imageId) {
 			rtn = morpheus.async.virtualImage.get(containerConfig.imageId as Long).blockingGet()
 		}
 		else if(imageType == 'local' && (containerConfig.localImageId || containerConfig.template)) {

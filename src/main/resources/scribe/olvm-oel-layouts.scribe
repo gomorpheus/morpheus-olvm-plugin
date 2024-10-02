@@ -15,6 +15,17 @@ resource "virtual-image" "olvm-image-morpheus-oel-9" {
 	zoneType = "olvm"
 }
 
+resource "os-type-image" "olvm-image-morpheus-oel-9" {
+  code               = "olvm.plugin.image.morpheus.oel.9.amd64"
+  provisionType      = "olvm-provision-standard"
+  virtualImage       = virtual-image.olvm-image-morpheus-oel-9
+  account            = null
+  osType = {
+     code = "oracle.64"
+     owner = null
+  }
+}
+
 resource "workload-type" "olvm-oel-9" {
 	code = "olvm-plugin-oel-9"
 	shortName = "oraclelinux"
@@ -99,6 +110,17 @@ resource "virtual-image" "olvm-image-morpheus-oel-8" {
 	zoneType = "olvm"
 }
 
+resource "os-type-image" "olvm-image-morpheus-oel-8" {
+  code               = "olvm.plugin.image.morpheus.oel.8.amd64"
+  provisionType      = "olvm-provision-standard"
+  virtualImage       = virtual-image.olvm-image-morpheus-oel-8
+  account            = null
+  osType = {
+     code = "oracle.64"
+     owner = null
+  }
+}
+
 resource "workload-type" "olvm-oel-8" {
 	code = "olvm-plugin-oel-8"
 	shortName = "oraclelinux"
@@ -181,6 +203,17 @@ resource "virtual-image" "olvm-image-morpheus-oel-7_9" {
 		code = "oracle.64"
 	}
 	zoneType = "olvm"
+}
+
+resource "os-type-image" "olvm-image-morpheus-oel-7_9" {
+  code               = "olvm.plugin.image.morpheus.oel.7.9.amd64"
+  provisionType      = "olvm-provision-standard"
+  virtualImage       = virtual-image.olvm-image-morpheus-oel-7_9
+  account            = null
+  osType = {
+     code = "oracle.64"
+     owner = null
+  }
 }
 
 resource "workload-type" "olvm-oel-7_9" {

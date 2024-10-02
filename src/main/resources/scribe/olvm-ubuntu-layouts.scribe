@@ -11,8 +11,20 @@ resource "virtual-image" "olvm-image-morpheus-ubuntu-24_04" {
 	installAgent = true
 	osType {
 		code = "ubuntu.24.04.64"
+		owner = null
 	}
 	zoneType = "olvm"
+}
+
+resource "os-type-image" "olvm-image-morpheus-ubuntu-24_04" {
+  code               = "olvm.plugin.image.morpheus.ubuntu.24.04.amd64"
+  provisionType      = "olvm-provision-standard"
+  virtualImage       = virtual-image.olvm-image-morpheus-ubuntu-24_04
+  account            = null
+  osType = {
+     code = "ubuntu.24.04.64"
+     owner = null
+  }
 }
 
 resource "workload-type" "olvm-ubuntu-24_04" {
@@ -95,8 +107,20 @@ resource "virtual-image" "olvm-image-morpheus-ubuntu-22_04" {
 	installAgent = true
 	osType {
 		code = "ubuntu.22.04.64"
+		owner = null
 	}
 	zoneType = "olvm"
+}
+
+resource "os-type-image" "olvm-image-morpheus-ubuntu-22_04" {
+  code               = "olvm.plugin.image.morpheus.ubuntu.22.04.amd64"
+  provisionType      = "olvm-provision-standard"
+  virtualImage       = virtual-image.olvm-image-morpheus-ubuntu-22_04
+  account            = null
+  osType = {
+     code = "ubuntu.22.04.64"
+     owner = null
+  }
 }
 
 resource "workload-type" "olvm-ubuntu-22_04" {
@@ -179,8 +203,20 @@ resource "virtual-image" "olvm-image-morpheus-ubuntu-20_04" {
 	installAgent = true
 	osType {
 		code = "ubuntu.20.04.64"
+		owner = null
 	}
 	zoneType = "olvm"
+}
+
+resource "os-type-image" "olvm-image-morpheus-ubuntu-20_04" {
+  code               = "olvm.plugin.image.morpheus.ubuntu.20.04.amd64"
+  provisionType      = "olvm-provision-standard"
+  virtualImage       = virtual-image.olvm-image-morpheus-ubuntu-20_04
+  account            = null
+  osType = {
+     code = "ubuntu.20.04.64"
+     owner = null
+  }
 }
 
 resource "workload-type" "olvm-ubuntu-20_04" {

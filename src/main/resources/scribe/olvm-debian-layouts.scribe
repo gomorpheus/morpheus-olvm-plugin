@@ -11,8 +11,20 @@ resource "virtual-image" "olvm-image-morpheus-debian-12" {
 	installAgent = true
 	osType {
 		code = "debian.64"
+		owner = null
 	}
 	zoneType = "olvm"
+}
+
+resource "os-type-image" "olvm-image-morpheus-debian-12" {
+  code               = "olvm.plugin.image.morpheus.debian.12.amd64"
+  provisionType      = "olvm-provision-standard"
+  virtualImage       = virtual-image.olvm-image-morpheus-debian-12
+  account            = null
+  osType = {
+     code = "debian.64"
+     owner = null
+  }
 }
 
 resource "workload-type" "olvm-debian-12" {
@@ -100,6 +112,17 @@ resource "virtual-image" "olvm-image-morpheus-debian-11" {
 	zoneType = "olvm"
 }
 
+resource "os-type-image" "olvm-image-morpheus-debian-11" {
+  code               = "olvm.plugin.image.morpheus.debian.11.amd64"
+  provisionType      = "olvm-provision-standard"
+  virtualImage       = virtual-image.olvm-image-morpheus-debian-11
+  account            = null
+  osType = {
+     code = "debian.64"
+     owner = null
+  }
+}
+
 resource "workload-type" "olvm-debian-11" {
 	code = "olvm-plugin-debian-11"
 	shortName = "debian"
@@ -182,6 +205,16 @@ resource "virtual-image" "olvm-image-morpheus-debian-10" {
 		code = "debian.64"
 	}
 	zoneType = "olvm"
+}
+resource "os-type-image" "olvm-image-morpheus-debian-10" {
+  code               = "olvm.plugin.image.morpheus.debian.10.amd64"
+  provisionType      = "olvm-provision-standard"
+  virtualImage       = virtual-image.olvm-image-morpheus-debian-10
+  account            = null
+  osType = {
+     code = "debian.64"
+     owner = null
+  }
 }
 
 resource "workload-type" "olvm-debian-10" {

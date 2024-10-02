@@ -11,8 +11,20 @@ resource "virtual-image" "olvm-image-morpheus-centos-9" {
 	installAgent = true
 	osType {
 		code = "cent.9.64"
+		owner = null
 	}
 	zoneType = "olvm"
+}
+
+resource "os-type-image" "olvm-image-morpheus-centos-9" {
+  code               = "olvm.plugin.image.morpheus.centos.9.amd64"
+  provisionType      = "olvm-provision-standard"
+  virtualImage       = virtual-image.olvm-image-morpheus-centos-9
+  account            = null
+  osType = {
+     code = "cent.9.64"
+     owner = null
+  }
 }
 
 resource "workload-type" "olvm-centos-9" {
@@ -95,8 +107,20 @@ resource "virtual-image" "olvm-image-morpheus-centos-8" {
 	installAgent = true
 	osType {
 		code = "cent.8.64"
+		owner = null
 	}
 	zoneType = "olvm"
+}
+
+resource "os-type-image" "olvm-image-morpheus-centos-8" {
+  code               = "olvm.plugin.image.morpheus.centos.8.amd64"
+  provisionType      = "olvm-provision-standard"
+  virtualImage       = virtual-image.olvm-image-morpheus-centos-8
+  account            = null
+  osType = {
+     code = "cent.8.64"
+     owner = null
+  }
 }
 
 resource "workload-type" "olvm-centos-8" {
@@ -179,8 +203,20 @@ resource "virtual-image" "olvm-image-morpheus-centos-7_9" {
 	installAgent = true
 	osType {
 		code = "cent.7.64"
+		owner = null
 	}
 	zoneType = "olvm"
+}
+
+resource "os-type-image" "olvm-image-morpheus-centos-7_9" {
+  code               = "olvm.plugin.image.morpheus.centos.7.9.amd64"
+  provisionType      = "olvm-provision-standard"
+  virtualImage       = virtual-image.olvm-image-morpheus-centos-7_9
+  account            = null
+  osType = {
+     code = "cent.7.64"
+     owner = null
+  }
 }
 
 resource "workload-type" "olvm-centos-7_9" {

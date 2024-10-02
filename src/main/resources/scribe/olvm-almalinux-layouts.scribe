@@ -11,8 +11,21 @@ resource "virtual-image" "olvm-image-morpheus-almalinux-9" {
 	installAgent = true
 	osType {
 		code = "almalinux.9.64"
+		owner = null
 	}
 	zoneType = "olvm"
+}
+
+
+resource "os-type-image" "olvm-image-morpheus-almalinux-9" {
+  code               = "olvm.plugin.image.morpheus.almalinux.9.amd64"
+  provisionType      = "olvm-provision-standard"
+  virtualImage       = virtual-image.olvm-image-morpheus-almalinux-9
+  account            = null
+  osType = {
+     code = "almalinux.9.64"
+     owner = null
+  }
 }
 
 resource "workload-type" "olvm-almalinux-9" {

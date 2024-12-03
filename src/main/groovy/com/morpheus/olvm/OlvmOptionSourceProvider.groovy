@@ -112,11 +112,13 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
         def rtn
         if(cloud?.accountCredentialData?.username && cloud?.accountCredentialData?.password) {
             def connection = OlvmComputeUtility.getToken(cloud)
-            def dcResult = OlvmComputeUtility.listDatacenters([connection:connection])
-            if (dcResult.success && dcResult.data.datacenters) {
-                rtn = [[name: morpheusContext.services.localization.get('gomorpheus.label.all'), value: 'all']]
-                for (dc in dcResult.data.datacenters) {
-                    rtn << [name:dc.name, value:dc.id]
+            if (!connection.error) {
+                def dcResult = OlvmComputeUtility.listDatacenters([connection: connection])
+                if (dcResult.success && dcResult.data.datacenters) {
+                    rtn = [[name: morpheusContext.services.localization.get('gomorpheus.label.all'), value: 'all']]
+                    for (dc in dcResult.data.datacenters) {
+                        rtn << [name: dc.name, value: dc.id]
+                    }
                 }
             }
         }

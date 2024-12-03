@@ -1909,10 +1909,14 @@ class OlvmComputeUtility {
             )
 
             if (resp.success) {
-                return [apiUrl: extractRootURL(config.endpointUrl), token: resp.data['access_token']]
+                return [success:true, apiUrl: extractRootURL(config.endpointUrl), token: resp.data['access_token']]
             } else {
-                throw new RuntimeException("Failed to authenticate to OLVM environment: ${extractErrorMessage(resp.data)}")
+                log.error("Failed to authenticate to OLVM environment: ${extractErrorMessage(resp.data)}")
+                return [success:false, apiUrl: extractRootURL(config.endpointUrl), error:extractErrorMessage(resp.data)]
             }
+        }
+        catch (Throwable t) {
+            return [success:false, apiUrl: extractRootURL(config.endpointUrl), error:t.message]
         }
         finally {
             client?.shutdownClient()

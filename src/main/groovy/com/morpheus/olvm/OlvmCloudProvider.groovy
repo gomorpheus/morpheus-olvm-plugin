@@ -179,25 +179,25 @@ class OlvmCloudProvider implements CloudProvider {
 	@Override
 	Collection<NetworkType> getNetworkTypes() {
 		Collection<NetworkType> networks = []
-		networks << new NetworkType(
-			code:'olvm-logical-network',
-			name:'OLVM Logical Network',
-			overlay:false,
-			creatable:false,
-			nameEditable:false,
-			cidrEditable:false,
-			dhcpServerEditable:false,
-			dnsEditable:false,
-			gatewayEditable:false,
-			ipv6Editable:false,
-			vlanIdEditable:false,
-			cidrRequired:true,
-			canAssignPool:false,
-			deletable:false,
-			hasNetworkServer:false,
-			hasCidr:true,
-			optionTypes:[]
-		)
+                networks << new NetworkType(
+                        code:'olvm-logical-network',
+                        name:'OLVM Logical Network',
+                        overlay:false,
+                        creatable:false,
+                        nameEditable:false,
+                        cidrEditable:true,
+                        dhcpServerEditable:false,
+                        dnsEditable:false,
+                        gatewayEditable:false,
+                        ipv6Editable:false,
+                        vlanIdEditable:false,
+                        cidrRequired:true,
+                        canAssignPool:true,
+                        deletable:false,
+                        hasNetworkServer:false,
+                        hasCidr:true,
+                        optionTypes:[]
+                )
 		return networks
 	}
 

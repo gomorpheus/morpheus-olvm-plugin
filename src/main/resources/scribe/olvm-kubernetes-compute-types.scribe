@@ -1,9 +1,6 @@
 /*
- * -- Version 33 --
- *
-/
-
-
+ -- Version 33 --
+*
 
 resource "compute-type-layout" "kubernetes-1_33-ubuntu-24_04-olvm-amd64-single" {
   code = "kubernetes-1_33-ubuntu-24_04-olvm-amd64-single"
@@ -42,17 +39,13 @@ resource "compute-type-layout" "kubernetes-1_33-ubuntu-24_04-olvm-amd64-single" 
   ]
 }
 
-
 /*
- * -- Version 32 --
- *
-/
-
-
+ -- Version 32 --
+*/
 
 resource "compute-type-layout" "kubernetes-1_32-ubuntu-22_04-olvm-amd64-single" {
   code = "kubernetes-1_32-ubuntu-22_04-olvm-amd64-single"
-  enabled = true
+  enabled = false
   name = "MKS Kubernetes 1.32 Cluster on Ubuntu 22.04"
   sortOrder = 5
   computeVersion = "22.04"
@@ -87,16 +80,18 @@ resource "compute-type-layout" "kubernetes-1_32-ubuntu-22_04-olvm-amd64-single" 
   ]
 }
 
+/*
+ -- Version 32 with Ubuntu 24.04 --
+*/
 
-
-resource "compute-type-layout" "kubernetes-1_30-ubuntu-22_04-olvm-amd64-single" {
-  code = "kubernetes-1_30-ubuntu-22_04-olvm-amd64-single"
-  enabled = false
-  name = "MKS Kubernetes 1.30 Cluster on Ubuntu 22.04"
-  sortOrder = 10
-  computeVersion = "22.04"
-  clusterVersion = "1.30.x"
-  description = "provision a kubernetes 1.30 cluster on ubuntu 22.04"
+resource "compute-type-layout" "kubernetes-1_32-ubuntu-24_04-olvm-amd64-single" {
+  code = "kubernetes-1_32-ubuntu-24_04-olvm-amd64-single"
+  enabled = true
+  name = "MKS Kubernetes 1.32 Cluster on Ubuntu 24.04"
+  sortOrder = 5
+  computeVersion = "24.04"
+  clusterVersion = "1.32.x"
+  description = "provision a kubernetes 1.32 cluster on ubuntu 24.04"
   type = {code = "olvm-kube-master"}
   serverCount = 4
   memoryRequirement = 1073741824
@@ -104,8 +99,8 @@ resource "compute-type-layout" "kubernetes-1_30-ubuntu-22_04-olvm-amd64-single" 
   containerRuntime = "containerd"
   networkRuntime = "calico"
   computeServers = [
-    compute-type-set.kubernetes-ubuntu-22_04-olvm-amd64-set,
-    compute-type-set.kubernetes-ubuntu-22_04-worker-olvm-amd64-set
+    compute-type-set.kubernetes-ubuntu-24_04-olvm-amd64-set,
+    compute-type-set.kubernetes-ubuntu-24_04-worker-olvm-amd64-set
   ]
   groupType = "kubernetes-cluster"
   provisionType =  "olvm-provision-standard"
@@ -118,13 +113,19 @@ resource "compute-type-layout" "kubernetes-1_30-ubuntu-22_04-olvm-amd64-single" 
   ]
   specTemplates = []
   packages = [
-    "kubernetes-calico-3-26-0-package",
-    "kubernetes-rook-1-13-package",
+    "kubernetes-calico-3-25-0-package",
+    "kubernetes-rook-1-15-0-package",
     "kubernetes-fluentbit-3-0-7-package",
     "kubernetes-prometheus-0-12-package",
     "kubernetes-nginx-ingress-operator-1-12-1-package"
   ]
 }
+
+
+
+/*
+ -- Version 31 --
+*/
 
 resource "compute-type-layout" "kubernetes-1_31-ubuntu-22_04-olvm-amd64-single" {
   code = "kubernetes-1_31-ubuntu-22_04-olvm-amd64-single"
@@ -157,6 +158,47 @@ resource "compute-type-layout" "kubernetes-1_31-ubuntu-22_04-olvm-amd64-single" 
   packages = [
     "kubernetes-calico-3-25-0-package",
     "kubernetes-rook-1-15-0-package",
+    "kubernetes-fluentbit-3-0-7-package",
+    "kubernetes-prometheus-0-12-package",
+    "kubernetes-nginx-ingress-operator-1-12-1-package"
+  ]
+}
+
+/*
+ -- Version 30 --
+*/
+
+resource "compute-type-layout" "kubernetes-1_30-ubuntu-22_04-olvm-amd64-single" {
+  code = "kubernetes-1_30-ubuntu-22_04-olvm-amd64-single"
+  enabled = false
+  name = "MKS Kubernetes 1.30 Cluster on Ubuntu 22.04"
+  sortOrder = 10
+  computeVersion = "22.04"
+  clusterVersion = "1.30.x"
+  description = "provision a kubernetes 1.30 cluster on ubuntu 22.04"
+  type = {code = "olvm-kube-master"}
+  serverCount = 4
+  memoryRequirement = 1073741824
+  hasAutoScale = true
+  containerRuntime = "containerd"
+  networkRuntime = "calico"
+  computeServers = [
+    compute-type-set.kubernetes-ubuntu-22_04-olvm-amd64-set,
+    compute-type-set.kubernetes-ubuntu-22_04-worker-olvm-amd64-set
+  ]
+  groupType = "kubernetes-cluster"
+  provisionType =  "olvm-provision-standard"
+  optionTypes = [
+    {code = "olvm.plugin.provision.datacenter"},
+    {code = "olvm.plugin.provision.cloudDatacenter"},
+    {code = "olvm.plugin.provision.cluster"},
+    {code = "kubernetes.master.podCidr"},
+    {code = "kubernetes.master.serviceCidr"}
+  ]
+  specTemplates = []
+  packages = [
+    "kubernetes-calico-3-26-0-package",
+    "kubernetes-rook-1-13-package",
     "kubernetes-fluentbit-3-0-7-package",
     "kubernetes-prometheus-0-12-package",
     "kubernetes-nginx-ingress-operator-1-12-1-package"

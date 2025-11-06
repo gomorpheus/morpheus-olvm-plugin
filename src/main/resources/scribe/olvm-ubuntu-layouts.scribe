@@ -348,8 +348,8 @@ resource "instance-type-layout" "olvm-ubuntu-18_04-single" {
 	hasAutoScale = true
 	portCount = 1
 	serverType = "vm"
-	enabled = true
-	creatable = true
+	enabled = false
+	creatable = false
 	supportsConvertToManaged = true
 	containers = [
 		workload-type-set.olvm-ubuntu-18_04-set

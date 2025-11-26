@@ -104,7 +104,8 @@ class NetworkSync {
                 //active:network.statusPresent() ? network.status() == NetworkStatus.OPERATIONAL : true,
                 cidr:cidr,
                 dhcpServer:true,
-                cloud:cloud
+                cloud:cloud,
+				allowStaticOverride: true
             ]
             def add = new NetworkModel(networkConfig)
             adds << add
@@ -140,6 +141,10 @@ class NetworkSync {
                 existingItem.description = description
                 save = true
             }
+			if (existingItem.allowStaticOverride != true) {
+				existingItem.allowStaticOverride = true
+				save = true
+			}
             if (save)
                 updates << existingItem
         }

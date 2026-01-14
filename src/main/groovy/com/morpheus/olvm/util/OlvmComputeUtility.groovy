@@ -7,7 +7,6 @@ import com.morpheusdata.core.util.image.Qcow2InputStream
 import com.morpheusdata.model.Cloud
 import com.morpheusdata.response.ServiceResponse
 import groovy.util.logging.Slf4j
-
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
@@ -858,14 +857,25 @@ class OlvmComputeUtility {
             def headers = getAuthenticatedBaseHeaders(connection)
             headers['Content-Type'] = 'application/json'
             client = getApiClient(connection)
+            
+            // Build simple initialization with ONLY cloud-init script
+            def initialization = [:]
+            
+            if (opts.cloudInitScript) {
+                initialization['custom_script'] = opts.cloudInitScript
+                log.debug("startVmWithCloudInit - Using cloud-init script only")
+            }
+            
             def reqBody = [
-                'vm':[
-                    'initialization':[
-                        'custom_script':opts.cloudInitScript
-                    ]
+                'vm': [
+                    'initialization': initialization
                 ],
-                'async':true, 'use_cloud_init':true
+                'async': true,
+                'use_cloud_init': true
             ]
+            
+            log.debug("startVmWithCloudInit - Request: custom_script with ${opts.cloudInitScript?.length() ?: 0} characters")
+            
             def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:reqBody, ignoreSSL:true)
             def response = client.callJsonApi(
                 connection.apiUrl,
@@ -890,8 +900,14 @@ class OlvmComputeUtility {
                 rtn = ServiceResponse.error("Failed to start vm: ${extractErrorMessage(response.data)}")
             }
         }
+        catch (Throwable t) {
+            log.error("startVmWithCloudInit error: ${t.message}", t)
+            rtn = ServiceResponse.error("Failed to start vm: ${t.message}")
+        }
         finally {
-            client?.shutdownClient()
+            if (client) {
+                client.shutdownClient()
+            }
         }
         return rtn
     }

@@ -102,8 +102,10 @@ class NetworkSync {
                 description:cloudItem.description,
                 active:cloud.defaultNetworkSyncActive ? (cloudItem.provisionable) : false,
                 //active:network.statusPresent() ? network.status() == NetworkStatus.OPERATIONAL : true,
-                cidr:cidr,
-                dhcpServer:true,
+                //cidr:cidr,
+                cidr: true,
+                dhcpServer:false,
+                allowStaticOverride:true,
                 cloud:cloud
             ]
             def add = new NetworkModel(networkConfig)
@@ -120,7 +122,7 @@ class NetworkSync {
             def masterItem = updateItem.masterItem
             def existingItem = updateItem.existingItem
             def save = false
-            def cidr = masterItem.ip ? NetworkUtility.networkToCidr(masterItem.ip, masterItem.netmask) : '0.0.0.0/1'
+            def cidr = masterItem.ip ? NetworkUtility.networkToCidr(masterItem.ip, masterItem.netmask) : (masterItem.cidr ?: '0.0.0.0/1')
             def description = masterItem.description
 
             if (existingItem.name != masterItem.name) {
@@ -132,12 +134,22 @@ class NetworkSync {
                 existingItem.displayName = masterItem.name
                 save = true
             }
-            if (existingItem.cidr != cidr) {
-                existingItem.cidr = cidr
+            if (cidr && cidr != '0.0.0.0/1' && existingItem.cidr != cidr) {
+                if (!existingItem.cidr || existingItem.cidr == '0.0.0.0/1') {
+                    existingItem.cidr = cidr
+                    save = true
+                }
+            }
+            if (masterItem.netmask && existingItem.netmask != masterItem.netmask) {
+                existingItem.netmask = masterItem.netmask
                 save = true
             }
             if (existingItem.description != description) {
                 existingItem.description = description
+                save = true
+            }
+            if (masterItem.gateway && existingItem.gateway != masterItem.gateway) {
+                existingItem.gateway = masterItem.gateway
                 save = true
             }
             if (save)

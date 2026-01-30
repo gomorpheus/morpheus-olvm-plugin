@@ -37,7 +37,11 @@ class NetworkSync {
             if (!this.@connection)
                 this.@connection = OlvmComputeUtility.getToken(cloud)
 
-            def olvmNetworks = OlvmComputeUtility.listNetworks([connection:connection]).data.networks
+            def listArgs = [connection:connection]
+            if(cloud.configMap.datacenter && cloud.configMap.datacenter?.toString() != 'all') {
+                listArgs['datacenterId'] = cloud.configMap.datacenter.toString()
+            }
+            def olvmNetworks = OlvmComputeUtility.listNetworks(listArgs).data.networks
             Observable<NetworkIdentityProjection> domainRecords = morpheusContext.async.network.listIdentityProjections(
                 new DataQuery().withFilters(
                     new DataFilter<String>('refType', 'ComputeZone'),

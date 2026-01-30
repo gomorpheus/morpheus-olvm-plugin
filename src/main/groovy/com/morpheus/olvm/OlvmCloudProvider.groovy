@@ -10,6 +10,8 @@ import com.morpheus.olvm.sync.VirtualMachineSync
 import com.morpheus.olvm.util.OlvmComputeUtility
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.Plugin
+import com.morpheusdata.core.data.DataFilter
+import com.morpheusdata.core.data.DataQuery
 import com.morpheusdata.core.providers.CloudProvider
 import com.morpheusdata.core.providers.ProvisionProvider
 import com.morpheusdata.model.BackupProvider
@@ -463,18 +465,30 @@ class OlvmCloudProvider implements CloudProvider {
 				new NetworkSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
 				log.info("${cloudInfo.name}: Networks Synced in ${new Date().time - now}ms")
 				now = new Date().time
-				new HostSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
+				List<String> clusterIds = null
+				if(cloudInfo.configMap.datacenter && cloudInfo.configMap.datacenter?.toString() != 'all') {
+					clusterIds = context.services.cloud.pool.listIdentityProjections(
+							new DataQuery().withFilters(
+									new DataFilter<String>('type', 'cluster'),
+									new DataFilter<String>('refType', 'ComputeZone'),
+									new DataFilter<String>('refId', cloudInfo.id)
+							)
+					).collect { it.externalId.toString() }
+				}
+				new HostSync(this.plugin, this.morpheus, cloudInfo, connection, clusterIds).execute()
 				log.info("${cloudInfo.name}: Hosts Synced in ${new Date().time - now}ms")
 				now = new Date().time
-				new TemplateSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
+				new TemplateSync(this.plugin, this.morpheus, cloudInfo, connection, clusterIds).execute()
 				log.info("${cloudInfo.name}: Templates Synced in ${new Date().time - now}ms")
 				now = new Date().time
-				new VirtualMachineSync(this.plugin, this.morpheus, cloudInfo, connection).execute()
+				new VirtualMachineSync(this.plugin, this.morpheus, cloudInfo, connection, clusterIds).execute()
 				log.info("${cloudInfo.name}: Virtual Machines Synced in ${new Date().time - now}ms")
 				rtn.success = true
 			}
 			else {
-				rtn = ServiceResponse.error(testResults.invalidLogin == true ? 'invalid credentials' : 'error connecting')
+				def status = testResults.data.invalidLogin ? 'invalid credentials' : 'error connecting'
+				rtn = ServiceResponse.error(status)
+				rtn.msg = status
 			}
 		 }
 		catch (Throwable t) {

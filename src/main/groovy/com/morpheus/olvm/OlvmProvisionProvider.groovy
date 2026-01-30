@@ -1073,8 +1073,6 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 					def nicName
 					if(platform == 'windows') {
 						nicName = (index == 0) ? 'Ethernet' : 'Ethernet ' + (index + 1)
-					} else if(platform == 'linux') {
-						nicName = "eth${index}"
 					} else {
 						nicName = "eth${index}"
 					}

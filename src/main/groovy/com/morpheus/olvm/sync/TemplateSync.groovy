@@ -24,13 +24,16 @@ class TemplateSync {
     private MorpheusContext morpheusContext
     private OlvmCloudPlugin plugin
     private Map connection
+    private List<String> clusterIds
 
-    public TemplateSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Map connection = null) {
+
+    public TemplateSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Map connection = null, List<String> clusterIds = null) {
         super()
         this.@cloud = cloud
         this.@plugin = plugin
         this.@morpheusContext = ctx
         this.@connection = connection
+        this.@clusterIds = clusterIds
     }
 
     def execute() {
@@ -40,7 +43,9 @@ class TemplateSync {
                 this.@connection = OlvmComputeUtility.getToken(cloud)
 
             def olvmTemplates = OlvmComputeUtility.listTemplates([connection:connection]).data.templates
-
+            if(clusterIds) {
+                olvmTemplates = olvmTemplates.findAll { clusterIds.contains(it.cluster?.id.toString()) }
+            }
             Observable<VirtualImageLocationIdentityProjection> domainRecords = morpheusContext.async.virtualImage.location.listIdentityProjections(
                 new DataQuery().withFilters(
                     new DataFilter<String>("virtualImage.imageType", ImageType.qcow2.toString()),

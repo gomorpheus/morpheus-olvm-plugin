@@ -25,13 +25,16 @@ class VirtualMachineSync {
     private Map connection
     private Map<String, ComputeServerType> computeServerTypes
     private List<ServicePlan> servicePlans
+    private List<String> clusterIds
 
-    public VirtualMachineSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Map connection = null) {
+
+    public VirtualMachineSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Map connection = null, List<String> clusterIds = null) {
         super()
         this.@cloud = cloud
         this.@plugin = plugin
         this.@morpheusContext = ctx
         this.@connection = connection
+        this.@clusterIds = clusterIds
     }
 
     def execute() {
@@ -42,13 +45,15 @@ class VirtualMachineSync {
                     connection = OlvmComputeUtility.getConnection(cloud)
 
                 def olvmVms = OlvmComputeUtility.listVirtualMachines([connection:connection]).data.vms
+                if(clusterIds) {
+                    olvmVms = olvmVms.findAll { clusterIds.contains(it.cluster.id.toString()) }
+                }
                 Observable<ComputeServerIdentityProjection> domainRecords = morpheusContext.async.computeServer.listIdentityProjections(
                     new DataQuery().withFilters(
                         new DataFilter('zone.id', cloud.id),
                         new DataFilter('computeServerType.code', '!=', 'olvm-hypervisor')
                     )
                 )
-
                 SyncTask<ComputeServerIdentityProjection, Map, ComputeServer> syncTask = new SyncTask<>(domainRecords, olvmVms)
                 syncTask.addMatchFunction { ComputeServerIdentityProjection existingItem, Map cloudItem ->
                     return existingItem.externalId == cloudItem.id

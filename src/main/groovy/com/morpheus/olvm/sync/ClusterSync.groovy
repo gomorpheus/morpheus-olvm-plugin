@@ -42,7 +42,11 @@ class ClusterSync {
                     new DataFilter<String>('refId', cloud.id)
                 )
             )
-            def olvmClusters = OlvmComputeUtility.listClusters([connection:connection]).data.clusters
+            def listArgs = [connection:connection]
+            if(cloud.configMap.datacenter && cloud.configMap.datacenter?.toString() != 'all') {
+                listArgs['datacenterId'] = cloud.configMap.datacenter.toString()
+            }
+            def olvmClusters = OlvmComputeUtility.listClusters(listArgs).data.clusters
             SyncTask<CloudPoolIdentity, Map, CloudPool> syncTask = new SyncTask<>(domainRecords, olvmClusters)
             def rtn = syncTask.addMatchFunction { domainObject, cloudObject ->
                 return domainObject.externalId == cloudObject.id

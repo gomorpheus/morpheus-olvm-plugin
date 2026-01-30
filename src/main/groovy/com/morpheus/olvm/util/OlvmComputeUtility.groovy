@@ -64,13 +64,16 @@ class OlvmComputeUtility {
             if (!connection) {
                 connection = getToken(opts.cloud)
             }
-
             def headers = getAuthenticatedBaseHeaders(connection)
             client = getApiClient(connection)
             def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def path = '/ovirt-engine/api/clusters'
+            if(opts.datacenterId) {
+                path = "/ovirt-engine/api/datacenters/${opts.datacenterId}/clusters".toString()
+            }
             def response = client.callJsonApi(
                 connection.apiUrl,
-                '/ovirt-engine/api/clusters',
+                path,
                 reqOptions,
                 'GET'
             )
@@ -219,15 +222,20 @@ class OlvmComputeUtility {
             }
             def headers = getAuthenticatedBaseHeaders(connection)
             client = getApiClient(connection)
-            def queryParams = [follow:'vnicprofiles']
+            def queryParams = [:]
+            def path = '/ovirt-engine/api/networks'
+            if(opts.datacenterId) {
+                path = "/ovirt-engine/api/datacenters/${URLEncoder.encode(opts.datacenterId, 'UTF-8')}/networks".toString()
+            } else {
+                queryParams = [follow:'vnicprofiles']
+            }
             def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
             def response = client.callJsonApi(
                 connection.apiUrl,
-                '/ovirt-engine/api/networks',
+                path,
                 reqOptions,
                 'GET'
             )
-
             if (response.success) {
                 def networks = []
                 for (network in response.data.network) {
@@ -291,9 +299,13 @@ class OlvmComputeUtility {
             def headers = getAuthenticatedBaseHeaders(connection)
             client = getApiClient(connection)
             def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def path = '/ovirt-engine/api/storagedomains'
+            if(opts.datacenterId) {
+                path = "/ovirt-engine/api/datacenters/${opts.datacenterId}/storagedomains".toString()
+            }
             def response = client.callJsonApi(
                 connection.apiUrl,
-                '/ovirt-engine/api/storagedomains',
+                path,
                 reqOptions,
                 'GET'
             )
@@ -305,8 +317,8 @@ class OlvmComputeUtility {
                 rtn.success = true
             }
             else {
-                log.error("Unable to get clusters: ${extractErrorMessage(response.data)}")
-                rtn.error = "Unable to get clusters: ${extractErrorMessage(response.data)}"
+                log.error("Unable to get storage domains: ${extractErrorMessage(response.data)}")
+                rtn.error = "Unable to get storage domains: ${extractErrorMessage(response.data)}"
             }
         }
         catch (Throwable t) {
@@ -1791,19 +1803,25 @@ class OlvmComputeUtility {
         try {
             client = getApiClient(connection)
             def headers = getAuthenticatedBaseHeaders(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
-            def resp = client.callJsonApi(
-                connection.apiUrl,
-                '/ovirt-engine/api',
-                reqOptions,
-                'GET'
-            )
-            if (resp.success) {
-                rtn.success = true
-                rtn.data.connection = connection
+            if(headers) {
+                def reqOptions = new HttpApiClient.RequestOptions(headers: headers, ignoreSSL: true)
+                def resp = client.callJsonApi(
+                        connection.apiUrl,
+                        '/ovirt-engine/api',
+                        reqOptions,
+                        'GET'
+                )
+                if (resp.success) {
+                    rtn.success = true
+                    rtn.data.connection = connection
+                } else {
+                    log.error("Failed testConnection(): ${extractErrorMessage(resp.data)}")
+                    rtn.error = extractErrorMessage(resp.data)
+                }
             } else {
-                log.error("Failed testConnection(): ${extractErrorMessage(resp.data)}")
-                rtn.error = extractErrorMessage(resp.data)
+                log.error("Failed to get a token")
+                rtn.error = "Failed to get a token"
+                rtn.success = false
             }
         }
         finally {
@@ -1971,7 +1989,12 @@ class OlvmComputeUtility {
     }
 
     static getAuthenticatedBaseHeaders(Map connection) {
-        return getAuthenticatedBaseHeaders(connection.token)
+        if(connection) {
+            return getAuthenticatedBaseHeaders(connection.token)
+        } else {
+            return null
+        }
+
     }
 
     static String extractErrorMessage(resp) {

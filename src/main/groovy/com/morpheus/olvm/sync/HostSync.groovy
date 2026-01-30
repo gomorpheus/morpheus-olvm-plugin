@@ -22,13 +22,15 @@ class HostSync {
     private OlvmCloudPlugin plugin
     private Map connection
     private Map<String, ComputeServerType> computeServerTypes
+    private List<String> clusterIds
 
-    public HostSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Map connection = null) {
+    public HostSync(OlvmCloudPlugin plugin, MorpheusContext ctx, Cloud cloud, Map connection = null, List<String> clusterIds = null) {
         super()
         this.@cloud = cloud
         this.@plugin = plugin
         this.@morpheusContext = ctx
         this.@connection = connection
+        this.@clusterIds = clusterIds
     }
 
     def execute() {
@@ -44,6 +46,9 @@ class HostSync {
                     new DataFilter('computeServerType.code', 'olvm-hypervisor')
                 )
             )
+            if(clusterIds) {
+                olvmHosts = olvmHosts.findAll { clusterIds.contains(it.cluster.id.toString()) }
+            }
             SyncTask<ComputeServerIdentityProjection,Map, ComputeServer> syncTask = new SyncTask<>(domainRecords, olvmHosts)
             syncTask.addMatchFunction { domainObject, cloudObject ->
                 return domainObject.externalId == cloudObject.id

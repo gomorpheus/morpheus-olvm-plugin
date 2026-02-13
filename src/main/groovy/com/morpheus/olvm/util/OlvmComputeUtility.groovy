@@ -192,7 +192,12 @@ class OlvmComputeUtility {
                 connection = getToken(opts.cloud)
             }
             def headers = getAuthenticatedBaseHeaders(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+
+			def queryParams = null
+			if(opts.includeNetworkAttachments) {
+				queryParams = [follow:'networkattachments']
+			}
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
             client = getApiClient(connection)
             def response = client.callJsonApi(
                 connection.apiUrl,
@@ -222,13 +227,8 @@ class OlvmComputeUtility {
             }
             def headers = getAuthenticatedBaseHeaders(connection)
             client = getApiClient(connection)
-            def queryParams = [:]
+            def queryParams = [follow:'vnicprofiles']
             def path = '/ovirt-engine/api/networks'
-            if(opts.datacenterId) {
-                path = "/ovirt-engine/api/datacenters/${URLEncoder.encode(opts.datacenterId, 'UTF-8')}/networks".toString()
-            } else {
-                queryParams = [follow:'vnicprofiles']
-            }
             def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
             def response = client.callJsonApi(
                 connection.apiUrl,
@@ -244,6 +244,7 @@ class OlvmComputeUtility {
                         for (profile in profiles) {
                             networks << [
                                 id:profile.id,
+								profileNetworkId: network.id,
                                 name:profile.name,
                                 provisionable:true,
                                 vlanId:network.vlan?.id,

@@ -32,16 +32,23 @@ class NetworkSync {
     }
 
     def execute() {
-        log.info("Starting OLVM network sync for cloud ${cloud.name})")
+        log.debug("Starting OLVM network sync for cloud {}", cloud.name)
         try {
             if (!this.@connection)
                 this.@connection = OlvmComputeUtility.getToken(cloud)
 
-            def listArgs = [connection:connection]
-            if(cloud.configMap.datacenter && cloud.configMap.datacenter?.toString() != 'all') {
-                listArgs['datacenterId'] = cloud.configMap.datacenter.toString()
-            }
-            def olvmNetworks = OlvmComputeUtility.listNetworks(listArgs).data.networks
+            def olvmNetworks = OlvmComputeUtility.listNetworks([connection:connection]).data.networks
+			// for network IP assignment, we have to pull from the hosts since the network attachment info is not included in the network listing
+			def hosts = OlvmComputeUtility.listHosts([connection:connection, includeNetworkAttachments: true]).data.hosts
+			def networkIpAssignments = extractNetworkIpAddressAssignments(hosts)
+			olvmNetworks.each { network ->
+				network.ipAssignment = networkIpAssignments[network.type == 'profile' ? network.profileNetworkId : network.id]
+			}
+			// filter by datacenter
+			if(cloud.configMap.datacenter && cloud.configMap.datacenter?.toString() != 'all') {
+				def datacenterId = cloud.configMap.datacenter.toString()
+				olvmNetworks = olvmNetworks.findAll { it.datacenterId == datacenterId }
+			}
             Observable<NetworkIdentityProjection> domainRecords = morpheusContext.async.network.listIdentityProjections(
                 new DataQuery().withFilters(
                     new DataFilter<String>('refType', 'ComputeZone'),
@@ -61,7 +68,7 @@ class NetworkSync {
                 return morpheusContext.async.network.listById(updateItems.collect { return it.existingItem.id } as List<Long>)
             }.start()
 
-            log.info("Finished OLVM network sync for cloud ${cloud.name}")
+            log.debug("Finished OLVM network sync for cloud {}", cloud.name)
             return ServiceResponse.success()
         }
         catch (Throwable t) {
@@ -79,8 +86,6 @@ class NetworkSync {
             def networkTypeCode = cloudItem.type == 'network' ? 'olvm-logical-network' : 'olvm-vnic-profile'
             def networkType =
                 morpheusContext.async.network.type.search(new DataQuery().withFilter(new DataFilter<String>('code', networkTypeCode))).blockingGet().items?.first()
-
-            def cidr = cloudItem.ip ? NetworkUtility.networkToCidr(cloudItem.ip, cloudItem.netMask) : '0.0.0.0/1'
 
             // Check to see if network belongs to a data center
             def datacenter
@@ -106,9 +111,8 @@ class NetworkSync {
                 description:cloudItem.description,
                 active:cloud.defaultNetworkSyncActive ? (cloudItem.provisionable) : false,
                 //active:network.statusPresent() ? network.status() == NetworkStatus.OPERATIONAL : true,
-                //cidr:cidr,
-                cidr: true,
-                dhcpServer:false,
+                cidr: '0.0.0.0/1',
+                dhcpServer: cloudItem.ipAssignment?.assignment_method == 'dhcp',
                 allowStaticOverride:true,
                 cloud:cloud
             ]
@@ -126,7 +130,6 @@ class NetworkSync {
             def masterItem = updateItem.masterItem
             def existingItem = updateItem.existingItem
             def save = false
-            def cidr = masterItem.ip ? NetworkUtility.networkToCidr(masterItem.ip, masterItem.netmask) : (masterItem.cidr ?: '0.0.0.0/1')
             def description = masterItem.description
 
             if (existingItem.name != masterItem.name) {
@@ -138,22 +141,8 @@ class NetworkSync {
                 existingItem.displayName = masterItem.name
                 save = true
             }
-            if (cidr && cidr != '0.0.0.0/1' && existingItem.cidr != cidr) {
-                if (!existingItem.cidr || existingItem.cidr == '0.0.0.0/1') {
-                    existingItem.cidr = cidr
-                    save = true
-                }
-            }
-            if (masterItem.netmask && existingItem.netmask != masterItem.netmask) {
-                existingItem.netmask = masterItem.netmask
-                save = true
-            }
             if (existingItem.description != description) {
                 existingItem.description = description
-                save = true
-            }
-            if (masterItem.gateway && existingItem.gateway != masterItem.gateway) {
-                existingItem.gateway = masterItem.gateway
                 save = true
             }
             if (save)
@@ -162,4 +151,25 @@ class NetworkSync {
         if (updates)
             morpheusContext.async.network.save(updates).blockingGet()
     }
+
+	def extractNetworkIpAddressAssignments(hosts) {
+		def assignmentsByNetwork = [:]
+		try {
+			hosts.each { host ->
+				def attachments = host.network_attachments?.network_attachment
+				attachments?.each { attachment ->
+					def networkId = attachment.network?.id
+					if(networkId) {
+						def ipAssignment = attachment.ip_address_assignments?.ip_address_assignment?.find { it.ip?.version == 'v4' }
+						if (ipAssignment) {
+							assignmentsByNetwork[networkId] = ipAssignment
+						}
+					}
+				}
+			}
+		} catch (e) {
+			log.error("Error extracting network IP address assignments: ${e}", e)
+		}
+		return assignmentsByNetwork
+	}
 }

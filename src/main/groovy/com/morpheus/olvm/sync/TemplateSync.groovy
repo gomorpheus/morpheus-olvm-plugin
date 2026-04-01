@@ -146,6 +146,7 @@ class TemplateSync {
             def locationConfig = [code:"olvm.plugin.template.${cloud.id}.${cloudItem.id}", externalId:cloudItem.id,
                                   refType:'ComputeZone', refId:cloud.id, imageName:cloudItem.name]
             def addLocation = new VirtualImageLocation(locationConfig)
+            addLocation.virtualImage = add
             add.imageLocations = [addLocation]
             adds << add
         }

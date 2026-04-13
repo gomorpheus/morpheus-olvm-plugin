@@ -756,11 +756,59 @@ class OlvmComputeUtility {
                 'GET'
             )
 
-            def templateDisk = response.data['disk_attachment'].first()
+            // Get ALL template disk attachments — not just the first — so every disk gets a storage domain mapping
+            def templateDiskAttachments = response.data['disk_attachment']
+            if (!(templateDiskAttachments instanceof List)) {
+                templateDiskAttachments = [templateDiskAttachments]
+            }
 
-            // merge network interfaces
-            def interfaces = [opts.networkConfig.primaryInterface]
-            interfaces.addAll(opts.networkConfig.extraInterfaces)
+            def bootableTemplateDisk = templateDiskAttachments.find { it.bootable?.toBoolean() } ?: templateDiskAttachments.first()
+            def nonBootableTemplateDisks = templateDiskAttachments.findAll { it.id != bootableTemplateDisk.id }
+
+            // Root (bootable) disk maps to rootVolume's datastore (user-selected)
+            def rootStorageDomainId = opts.rootVolume.datastore.externalId
+            log.debug("createServer: root disk id=${bootableTemplateDisk.id} -> storage domain ${rootStorageDomainId}")
+            def diskAttachmentList = []
+            diskAttachmentList << [disk:[
+                id: bootableTemplateDisk.id,
+                'provisioned_size': opts.rootVolume.maxStorage,
+                'storage_domains': ['storage_domain': [[id: rootStorageDomainId]]]
+            ]]
+
+            // Non-bootable template disks: prefer user-specified datastore from Morpheus StorageVolume,
+            // but fall back to the template disk's own storage domain fetched directly from oVirt.
+            // This avoids "Storage Domain doesn't exist" errors from stale/missing Morpheus datastore records.
+            nonBootableTemplateDisks.eachWithIndex { nonBootableDisk, i ->
+                // Bounds-safe access: opts.dataDisks may have fewer entries than template non-boot disks
+                def userDatastoreId = (opts.dataDisks?.size() > i) ? opts.dataDisks[i]?.datastore?.externalId : null
+
+                def targetDatastoreId
+                if (userDatastoreId) {
+                    targetDatastoreId = userDatastoreId
+                    log.debug("createServer: data disk[${i}] id=${nonBootableDisk.id} -> user-specified storage domain ${targetDatastoreId}")
+                } else {
+                    // Fetch this disk's storage domain directly from oVirt — authoritative source
+                    def diskHref = nonBootableDisk.disk?.href ?: "/ovirt-engine/api/disks/${nonBootableDisk.id}".toString()
+                    def diskDetail = client.callJsonApi(connection.apiUrl, diskHref, reqOptions, 'GET')
+                    def templateDiskStorageDomainId = diskDetail.data?.storage_domains?.storage_domain?.first()?.id
+                    targetDatastoreId = templateDiskStorageDomainId ?: rootStorageDomainId
+                    log.debug("createServer: data disk[${i}] id=${nonBootableDisk.id} -> template disk's storage domain ${targetDatastoreId} (fetched from oVirt)")
+                }
+
+                diskAttachmentList << [disk:[
+                    id: nonBootableDisk.id,
+                    'storage_domains': ['storage_domain': [[id: targetDatastoreId]]]
+                ]]
+            }
+
+            // merge network interfaces — guard against null primaryInterface and null extraInterfaces list
+            def interfaces = []
+            if (opts.networkConfig?.primaryInterface) {
+                interfaces << opts.networkConfig.primaryInterface
+            }
+            if (opts.networkConfig?.extraInterfaces) {
+                interfaces.addAll(opts.networkConfig.extraInterfaces)
+            }
 
             // send vm create to api
             def postBody = [
@@ -770,11 +818,7 @@ class OlvmComputeUtility {
                 memory:opts.maxMemory,
                 cpu:buildCpus(opts.workloadConfig),
                 nics:[nic:buildNetworkInterfaces(interfaces)],
-                'disk_attachments':[
-                    'disk_attachment':[
-                        [disk:[id:templateDisk.id, 'provisioned_size':opts.rootVolume.maxStorage, 'storage_domains':['storage_domain':[[id:opts.rootVolume.datastore.externalId]]]]]
-                    ]
-                ]
+                'disk_attachments':['disk_attachment': diskAttachmentList]
             ]
             def postHeaders = getAuthenticatedBaseHeaders(connection)
             def postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:postBody, ignoreSSL:true)
@@ -1862,7 +1906,9 @@ class OlvmComputeUtility {
     static List<Map> buildNetworkInterfaces(List interfaces) {
         def nics = []
         for (iface in interfaces) {
-            nics << buildNetworkInterface(iface)
+            if (iface != null) {
+                nics << buildNetworkInterface(iface)
+            }
         }
         return nics
     }

@@ -679,4 +679,9 @@ class OlvmCloudProvider implements CloudProvider {
 	String getName() {
 		return 'OLVM'
 	}
+
+	@Override
+	CloudClassification getCloudClassification() {
+		return CloudClassification.PRIVATE;
+	}
 }

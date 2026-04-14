@@ -1381,7 +1381,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			rtn = workload.workloadType.virtualImage
 		}
 		else if (containerConfig.template) {
-			rtn = morpheus.async.virtualImage.get(containerConfig.template.value).blockingGet()
+			rtn = morpheus.async.virtualImage.get(containerConfig.template).blockingGet()
 		}
 		return rtn
 	}
@@ -1982,21 +1982,38 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 					throw new RuntimeException("Unable to update disk size: ${OlvmComputeUtility.extractErrorMessage(response.data)}")
 				}
 
-				// add data disks via cloud api, then save off disk ids
-				if (runConfig.dataDisks?.size() > 0) {
+			// Handle data disks — some may already exist on the VM (cloned from template via disk_attachments),
+			// others are truly extra disks that need to be created fresh via the API
+			if (runConfig.dataDisks?.size() > 0) {
+				def clonedTemplateDisks = vmDetails.data.disks.findAll { d -> !d.bootable }
+				def extraDataDisks = []
+
+				runConfig.dataDisks.eachWithIndex { StorageVolume vol, int i ->
+					if (i < clonedTemplateDisks.size()) {
+						// This data disk was already cloned from the template — just assign its external id
+						vol.externalId = clonedTemplateDisks[i].id
+						saveAndGetVolume(vol)
+					} else {
+						// This is an extra disk beyond the template — needs to be created via API
+						extraDataDisks << vol
+					}
+				}
+
+				if (extraDataDisks) {
 					def dataDiskResp = OlvmComputeUtility.addDisksToVm([
 						connection: runConfig.connection, vmId: server.externalId,
-						disks     : runConfig.dataDisks
+						disks     : extraDataDisks
 					])
 
-					for (StorageVolume vol in runConfig.dataDisks) {
+					for (StorageVolume vol in extraDataDisks) {
 						def cloudDisk = dataDiskResp.data.disks.find { it -> return it.name == vol.name }
 						vol.externalId = cloudDisk.externalId
 						saveAndGetVolume(vol)
 					}
 				}
+			}
 
-				// add primary network interface if one does not exist on
+
 				if (!vmDetails.data.nics) {
 					def addPrimaryInterface = OlvmComputeUtility.addNicsToVm(
 						[connection: runConfig.connection, nics: [runConfig.networkConfig.primaryInterface], vmId: server.externalId]

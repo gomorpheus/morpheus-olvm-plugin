@@ -761,44 +761,66 @@ class OlvmComputeUtility {
             if (!(templateDiskAttachments instanceof List)) {
                 templateDiskAttachments = [templateDiskAttachments]
             }
+            templateDiskAttachments = templateDiskAttachments.findAll { it }
 
-            def bootableTemplateDisk = templateDiskAttachments.find { it.bootable?.toBoolean() } ?: templateDiskAttachments.first()
-            def nonBootableTemplateDisks = templateDiskAttachments.findAll { it.id != bootableTemplateDisk.id }
+            if (!templateDiskAttachments) {
+                throw new RuntimeException("Template ${imageRef} does not contain any disk attachments")
+            }
+
+            def templateDisks = templateDiskAttachments.collect { templateDiskAttachment ->
+                buildTemplateDiskMetadata(templateDiskAttachment, client, connection, reqOptions)
+            }
+
+            def bootableTemplateDisk = templateDisks.find { it.bootable } ?: templateDisks.first()
+            def nonBootableTemplateDisks = templateDisks.findAll { it.templateDiskId != bootableTemplateDisk.templateDiskId }
 
             // Root (bootable) disk maps to rootVolume's datastore (user-selected)
             def rootStorageDomainId = opts.rootVolume.datastore.externalId
-            log.debug("createServer: root disk id=${bootableTemplateDisk.id} -> storage domain ${rootStorageDomainId}")
+            log.debug("createServer: root disk id=${bootableTemplateDisk.templateDiskId} -> storage domain ${rootStorageDomainId}")
             def diskAttachmentList = []
             diskAttachmentList << [disk:[
-                id: bootableTemplateDisk.id,
+                id: bootableTemplateDisk.templateDiskId,
                 'provisioned_size': opts.rootVolume.maxStorage,
                 'storage_domains': ['storage_domain': [[id: rootStorageDomainId]]]
             ]]
 
-            // Non-bootable template disks: prefer user-specified datastore from Morpheus StorageVolume,
-            // but fall back to the template disk's own storage domain fetched directly from oVirt.
-            // This avoids "Storage Domain doesn't exist" errors from stale/missing Morpheus datastore records.
-            nonBootableTemplateDisks.eachWithIndex { nonBootableDisk, i ->
-                // Bounds-safe access: opts.dataDisks may have fewer entries than template non-boot disks
-                def userDatastoreId = (opts.dataDisks?.size() > i) ? opts.dataDisks[i]?.datastore?.externalId : null
+            def availableDataDisks = (opts.dataDisks ?: []).collect { it }
+            def templateDiskMappings = []
 
-                def targetDatastoreId
-                if (userDatastoreId) {
-                    targetDatastoreId = userDatastoreId
-                    log.debug("createServer: data disk[${i}] id=${nonBootableDisk.id} -> user-specified storage domain ${targetDatastoreId}")
-                } else {
-                    // Fetch this disk's storage domain directly from oVirt — authoritative source
-                    def diskHref = nonBootableDisk.disk?.href ?: "/ovirt-engine/api/disks/${nonBootableDisk.id}".toString()
-                    def diskDetail = client.callJsonApi(connection.apiUrl, diskHref, reqOptions, 'GET')
-                    def templateDiskStorageDomainId = diskDetail.data?.storage_domains?.storage_domain?.first()?.id
-                    targetDatastoreId = templateDiskStorageDomainId ?: rootStorageDomainId
-                    log.debug("createServer: data disk[${i}] id=${nonBootableDisk.id} -> template disk's storage domain ${targetDatastoreId} (fetched from oVirt)")
+            // Non-bootable template disks are matched to Morpheus data volumes by stable metadata instead of list position.
+            nonBootableTemplateDisks.each { nonBootableDisk ->
+                def matchResult = findStableDiskMatch(nonBootableDisk, availableDataDisks)
+                if (matchResult.ambiguous) {
+                    def conflictingVolumes = matchResult.matches.collect { describeDiskMatchKey(it) }.join('; ')
+                    throw new RuntimeException("Ambiguous Morpheus data volume match for template disk ${describeDiskMatchKey(nonBootableDisk)} (${matchResult.key}): ${conflictingVolumes}")
+                }
+                if (!matchResult.match) {
+                    throw new RuntimeException("Unable to match template data disk ${describeDiskMatchKey(nonBootableDisk)} to a Morpheus data volume")
                 }
 
+                def matchedVolume = matchResult.match
+                def targetDatastoreId = matchedVolume?.datastore?.externalId ?: nonBootableDisk.storageDomainId ?: rootStorageDomainId
+                log.debug("createServer: template data disk ${describeDiskMatchKey(nonBootableDisk)} -> volume ${matchedVolume.id} using ${matchResult.strategy} storage domain ${targetDatastoreId}")
+
                 diskAttachmentList << [disk:[
-                    id: nonBootableDisk.id,
+                    id: nonBootableDisk.templateDiskId,
                     'storage_domains': ['storage_domain': [[id: targetDatastoreId]]]
                 ]]
+
+                templateDiskMappings << [
+                    templateDiskId: nonBootableDisk.templateDiskId,
+                    templateAttachmentId: nonBootableDisk.attachmentId,
+                    logicalName: nonBootableDisk.logicalName ?: matchedVolume.deviceName,
+                    name: nonBootableDisk.name,
+                    size: nonBootableDisk.size,
+                    storageDomainId: targetDatastoreId,
+                    matchStrategy: matchResult.strategy,
+                    volumeId: matchedVolume.id,
+                    volumeName: matchedVolume.name,
+                    volumeSize: normalizeDiskSize(matchedVolume.maxStorage),
+                    volumeDeviceName: matchedVolume.deviceName
+                ]
+                availableDataDisks.remove(matchedVolume)
             }
 
             // merge network interfaces — guard against null primaryInterface and null extraInterfaces list
@@ -833,7 +855,7 @@ class OlvmComputeUtility {
                 throw new RuntimeException("Failed to create vm ${opts.name}: ${extractErrorMessage(response.data)}")
             }
             def vm = response.data
-            rtn.data = [vmId:vm.id, vm:vm]
+            rtn.data = [vmId:vm.id, vm:vm, templateDiskMappings:templateDiskMappings]
             rtn.success = true
         }
         catch (Throwable t) {
@@ -844,6 +866,124 @@ class OlvmComputeUtility {
             client?.shutdownClient()
         }
         return rtn
+    }
+
+    protected static Map buildTemplateDiskMetadata(templateDiskAttachment, HttpApiClient client, Map connection, HttpApiClient.RequestOptions reqOptions) {
+        def diskRef = templateDiskAttachment?.disk ?: [:]
+        def templateDiskId = diskRef.id ?: templateDiskAttachment?.id
+        def diskHref = diskRef.href ?: (templateDiskId ? "/ovirt-engine/api/disks/${templateDiskId}".toString() : null)
+        def diskDetail = [:]
+
+        if (diskHref) {
+            def diskResponse = client.callJsonApi(connection.apiUrl, diskHref, reqOptions, 'GET')
+            if (!diskResponse.success) {
+                throw new RuntimeException("Failed to load template disk ${templateDiskId}: ${extractErrorMessage(diskResponse.data)}")
+            }
+            diskDetail = diskResponse.data ?: [:]
+        }
+
+        return [
+            attachmentId: templateDiskAttachment?.id,
+            templateDiskId: templateDiskId,
+            bootable: templateDiskAttachment?.bootable?.toBoolean(),
+            logicalName: templateDiskAttachment?.get('logical_name'),
+            interface: templateDiskAttachment?.interface,
+            active: templateDiskAttachment?.active?.toBoolean(),
+            name: diskDetail?.name ?: diskRef?.name,
+            size: normalizeDiskSize(diskDetail?.provisioned_size),
+            storageDomainId: extractStorageDomainId(diskDetail?.storage_domains?.storage_domain)
+        ]
+    }
+
+    protected static String extractStorageDomainId(storageDomainData) {
+        if (storageDomainData instanceof List) {
+            return storageDomainData.find { it?.id }?.id
+        }
+        return storageDomainData?.id
+    }
+
+    static Map findStableDiskMatch(sourceDisk, Collection candidates) {
+        def logicalName = normalizeDeviceName(sourceDisk?.logicalName ?: sourceDisk?.deviceName)
+        if (logicalName) {
+            def logicalMatches = candidates.findAll { candidate ->
+                normalizeDeviceName(candidate?.logicalName ?: candidate?.deviceName ?: candidate?.device) == logicalName
+            }
+            if (logicalMatches.size() == 1) {
+                return [match: logicalMatches.first(), strategy: 'logicalName', key: "logicalName=${logicalName}"]
+            }
+            if (logicalMatches.size() > 1) {
+                return [ambiguous: true, matches: logicalMatches, strategy: 'logicalName', key: "logicalName=${logicalName}"]
+            }
+        }
+
+        def diskName = normalizeDiskName(sourceDisk?.name)
+        def diskSize = normalizeDiskSize(sourceDisk?.size ?: sourceDisk?.maxStorage)
+        if (diskName && diskSize != null) {
+            def nameSizeMatches = candidates.findAll { candidate ->
+                normalizeDiskName(candidate?.name) == diskName &&
+                    normalizeDiskSize(candidate?.size ?: candidate?.maxStorage) == diskSize
+            }
+            if (nameSizeMatches.size() == 1) {
+                return [match: nameSizeMatches.first(), strategy: 'nameAndSize', key: "name=${diskName}, size=${diskSize}"]
+            }
+            if (nameSizeMatches.size() > 1) {
+                return [ambiguous: true, matches: nameSizeMatches, strategy: 'nameAndSize', key: "name=${diskName}, size=${diskSize}"]
+            }
+        }
+
+        return [match: null, key: describeDiskMatchKey(sourceDisk)]
+    }
+
+    static String describeDiskMatchKey(disk) {
+        def details = []
+        def logicalName = normalizeDeviceName(disk?.logicalName ?: disk?.deviceName ?: disk?.device)
+        def diskName = disk?.name
+        def diskSize = normalizeDiskSize(disk?.size ?: disk?.maxStorage)
+        if (logicalName) {
+            details << "logicalName=${logicalName}"
+        }
+        if (diskName) {
+            details << "name=${diskName}"
+        }
+        if (diskSize != null) {
+            details << "size=${diskSize}"
+        }
+        if (disk?.templateDiskId) {
+            details << "templateDiskId=${disk.templateDiskId}"
+        } else if (disk?.id) {
+            details << "id=${disk.id}"
+        }
+        if (disk?.volumeId) {
+            details << "volumeId=${disk.volumeId}"
+        }
+        return details ? details.join(', ') : 'no stable disk metadata'
+    }
+
+    protected static String normalizeDeviceName(value) {
+        if (!value) {
+            return null
+        }
+        def normalized = value.toString().trim().toLowerCase()
+        if (normalized.startsWith('/dev/')) {
+            normalized = normalized.substring('/dev/'.length())
+        }
+        return normalized ?: null
+    }
+
+    protected static String normalizeDiskName(value) {
+        def normalized = value?.toString()?.trim()?.toLowerCase()
+        return normalized ?: null
+    }
+
+    protected static Long normalizeDiskSize(value) {
+        if (value == null || value == '') {
+            return null
+        }
+        try {
+            return value.toString().toLong()
+        } catch (ignored) {
+            return null
+        }
     }
 
     static createServerFromSnapshot(opts) {

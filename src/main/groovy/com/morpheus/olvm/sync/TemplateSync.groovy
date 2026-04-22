@@ -37,7 +37,7 @@ class TemplateSync {
     }
 
     def execute() {
-        log.info("Starting OLVM template sync for cloud ${cloud.name})")
+        log.info("Starting OLVM template sync for cloud ${cloud.name}")
         try {
             if (!this.@connection)
                 this.@connection = OlvmComputeUtility.getToken(cloud)

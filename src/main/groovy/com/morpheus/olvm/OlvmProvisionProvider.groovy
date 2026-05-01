@@ -1982,40 +1982,36 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 					throw new RuntimeException("Unable to update disk size: ${OlvmComputeUtility.extractErrorMessage(response.data)}")
 				}
 
-				// Handle data disks — cloned template disks are reconciled by stable metadata and any remaining
-				// Morpheus data volumes are created afterwards as truly extra disks.
-				if (runConfig.dataDisks?.size() > 0) {
-					def clonedVmDisks = vmDetails.data.disks.findAll { d -> !d.bootable }
-					def templateDiskMappings = createResults.data?.templateDiskMappings ?: []
-					def templateBackedVolumeIds = [] as Set
+			// Handle data disks — some may already exist on the VM (cloned from template via disk_attachments),
+			// others are truly extra disks that need to be created fresh via the API
+			if (runConfig.dataDisks?.size() > 0) {
+				def clonedTemplateDisks = vmDetails.data.disks.findAll { d -> !d.bootable }
+				def extraDataDisks = []
 
-					if (templateDiskMappings) {
-						templateBackedVolumeIds = reconcileClonedTemplateDisks(runConfig.dataDisks, templateDiskMappings, clonedVmDisks)
-					} else if (clonedVmDisks) {
-						if (backupSetId && cloneContainerId) {
-							templateBackedVolumeIds = reconcileClonedSnapshotDisks(runConfig.dataDisks, clonedVmDisks)
-						} else {
-							throw new RuntimeException("Unable to reconcile cloned template data disks for ${server.name}: missing template disk metadata from createServer()")
-						}
-					}
-
-					def extraDataDisks = runConfig.dataDisks.findAll { StorageVolume vol ->
-						!(vol.id in templateBackedVolumeIds)
-					}
-
-					if (extraDataDisks) {
-						def dataDiskResp = OlvmComputeUtility.addDisksToVm([
-							connection: runConfig.connection, vmId: server.externalId,
-							disks     : extraDataDisks
-						])
-
-						if (!dataDiskResp.success) {
-							throw new RuntimeException(dataDiskResp.error ?: "Failed to add data disks to vm ${server.externalId}")
-						}
-
-						assignAddedDataDisks(extraDataDisks, dataDiskResp.data?.disks ?: [])
+				runConfig.dataDisks.eachWithIndex { StorageVolume vol, int i ->
+					if (i < clonedTemplateDisks.size()) {
+						// This data disk was already cloned from the template — just assign its external id
+						vol.externalId = clonedTemplateDisks[i].id
+						saveAndGetVolume(vol)
+					} else {
+						// This is an extra disk beyond the template — needs to be created via API
+						extraDataDisks << vol
 					}
 				}
+
+				if (extraDataDisks) {
+					def dataDiskResp = OlvmComputeUtility.addDisksToVm([
+						connection: runConfig.connection, vmId: server.externalId,
+						disks     : extraDataDisks
+					])
+
+					for (StorageVolume vol in extraDataDisks) {
+						def cloudDisk = dataDiskResp.data.disks.find { it -> return it.name == vol.name }
+						vol.externalId = cloudDisk.externalId
+						saveAndGetVolume(vol)
+					}
+				}
+			}
 
 
 				if (!vmDetails.data.nics) {
@@ -2097,98 +2093,6 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			provisionResponse.error = taskResults.error
 		}
 		return taskResults
-	}
-
-	protected Set reconcileClonedTemplateDisks(List<StorageVolume> dataDisks, List templateDiskMappings, List clonedVmDisks) {
-		def mappedVolumeIds = [] as Set
-		def remainingVmDisks = clonedVmDisks.collect { it }
-
-		templateDiskMappings.each { diskMapping ->
-			def volume = dataDisks.find { it.id == diskMapping.volumeId }
-			if (!volume) {
-				throw new RuntimeException("Missing Morpheus data volume ${diskMapping.volumeId} for template disk ${OlvmComputeUtility.describeDiskMatchKey(diskMapping)}")
-			}
-			if (mappedVolumeIds.contains(volume.id)) {
-				throw new RuntimeException("Duplicate template disk mapping detected for Morpheus volume ${volume.id}")
-			}
-
-			def matchResult = OlvmComputeUtility.findStableDiskMatch(diskMapping, remainingVmDisks)
-			if (matchResult.ambiguous) {
-				def conflictingDisks = matchResult.matches.collect { OlvmComputeUtility.describeDiskMatchKey(it) }.join('; ')
-				throw new RuntimeException("Ambiguous cloned VM disk match for volume ${volume.id} (${volume.deviceName ?: volume.name}) using ${matchResult.key}: ${conflictingDisks}")
-			}
-			if (!matchResult.match) {
-				throw new RuntimeException("Unable to find cloned VM disk for volume ${volume.id} (${volume.deviceName ?: volume.name}) using ${OlvmComputeUtility.describeDiskMatchKey(diskMapping)}")
-			}
-
-			def matchedVmDisk = matchResult.match
-			volume.externalId = matchedVmDisk.id
-			saveAndGetVolume(volume)
-			mappedVolumeIds << volume.id
-			remainingVmDisks.remove(matchedVmDisk)
-		}
-
-		if (remainingVmDisks) {
-			throw new RuntimeException("Found unmatched cloned template disk(s): ${remainingVmDisks.collect { OlvmComputeUtility.describeDiskMatchKey(it) }.join('; ')}")
-		}
-
-		return mappedVolumeIds
-	}
-
-	protected Set reconcileClonedSnapshotDisks(List<StorageVolume> dataDisks, List clonedVmDisks) {
-		def dataDiskCount = dataDisks?.size() ?: 0
-		def clonedVmDiskCount = clonedVmDisks?.size() ?: 0
-		if (dataDiskCount != clonedVmDiskCount) {
-			def volumeSummary = dataDisks?.collect { StorageVolume volume ->
-				"${volume.id} (${volume.deviceName ?: volume.name})"
-			}?.join('; ') ?: 'none'
-			def clonedDiskSummary = clonedVmDisks?.collect { disk ->
-				OlvmComputeUtility.describeDiskMatchKey(disk)
-			}?.join('; ') ?: 'none'
-			throw new RuntimeException("Unable to reconcile cloned snapshot disks: snapshot fallback requires strict 1:1 mapping between Morpheus data volumes (${dataDiskCount}) and cloned VM disks (${clonedVmDiskCount}). Volumes: ${volumeSummary}. Cloned disks: ${clonedDiskSummary}")
-		}
-
-		def mappedVolumeIds = [] as Set
-
-		dataDisks.eachWithIndex { StorageVolume volume, int index ->
-			volume.externalId = clonedVmDisks[index].id
-			saveAndGetVolume(volume)
-			mappedVolumeIds << volume.id
-		}
-
-		return mappedVolumeIds
-	}
-
-	protected void assignAddedDataDisks(List<StorageVolume> extraDataDisks, List attachedDisks) {
-		def remainingAttachedDisks = attachedDisks.collect { attachedDisk ->
-			[
-				externalId: attachedDisk.externalId,
-				id: attachedDisk.externalId,
-				deviceName: attachedDisk.device,
-				name: attachedDisk.name,
-				size: attachedDisk.size
-			]
-		}
-
-		extraDataDisks.each { StorageVolume vol ->
-			def matchResult = OlvmComputeUtility.findStableDiskMatch(vol, remainingAttachedDisks)
-			if (matchResult.ambiguous) {
-				def conflictingDisks = matchResult.matches.collect { OlvmComputeUtility.describeDiskMatchKey(it) }.join('; ')
-				throw new RuntimeException("Ambiguous added disk match for volume ${vol.id} (${vol.deviceName ?: vol.name}) using ${matchResult.key}: ${conflictingDisks}")
-			}
-			if (!matchResult.match) {
-				throw new RuntimeException("Unable to match added disk for volume ${vol.id} (${vol.deviceName ?: vol.name})")
-			}
-
-			def cloudDisk = matchResult.match
-			vol.externalId = cloudDisk.externalId
-			saveAndGetVolume(vol)
-			remainingAttachedDisks.remove(cloudDisk)
-		}
-
-		if (remainingAttachedDisks) {
-			throw new RuntimeException("Found unmatched added disk(s): ${remainingAttachedDisks.collect { OlvmComputeUtility.describeDiskMatchKey(it) }.join('; ')}")
-		}
 	}
 
 	def buildDataDiskList(dataDisks) {

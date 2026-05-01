@@ -8,6 +8,7 @@ import com.morpheus.olvm.sync.StorageDomainSync
 import com.morpheus.olvm.sync.TemplateSync
 import com.morpheus.olvm.sync.VirtualMachineSync
 import com.morpheus.olvm.util.OlvmComputeUtility
+import com.morpheusdata.core.util.ComputeUtility
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.Plugin
 import com.morpheusdata.core.data.DataFilter
@@ -245,7 +246,7 @@ class OlvmCloudProvider implements CloudProvider {
 			code        : 'olvm-standard', displayName: 'standard', name: 'olvm-standard',
 			description : 'OLVM - standard', volumeType: 'volume', enabled: true,
 			customLabel : true, customSize: true, defaultType: true, autoDelete: true,
-			minStorage  : 0l, maxStorage: 0l,
+			minStorage  : (ComputeUtility.ONE_GIGABYTE), maxStorage: (16L * ComputeUtility.ONE_TERABYTE),
 			hasDatastore: true, allowSearch: true, volumeCategory: 'volume',
 			displayOrder: 0
 		])

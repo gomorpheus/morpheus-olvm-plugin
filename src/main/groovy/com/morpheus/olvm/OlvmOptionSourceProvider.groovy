@@ -156,7 +156,7 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
             else
                 setAsDefault = args?.defaultValue == cloudPool.id.toString()
             rtn << [name:cloudPool.name, value:cloudPool.id, isDefault:setAsDefault]
-            i = i++
+            i++
         }
         return rtn
     }

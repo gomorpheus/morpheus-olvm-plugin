@@ -811,6 +811,7 @@ class OlvmComputeUtility {
             }
 
             // send vm create to api
+            def biosType = opts.biosType ?: opts.workloadConfig?.biosType ?: opts.server?.configMap?.biosType ?: 'q35_sea_bios'
             def postBody = [
                 name:opts.name,
                 cluster:[id:opts.clusterRef],
@@ -820,6 +821,10 @@ class OlvmComputeUtility {
                 nics:[nic:buildNetworkInterfaces(interfaces)],
                 'disk_attachments':['disk_attachment': diskAttachmentList]
             ]
+            if (biosType) {
+                postBody.bios = [type: biosType]
+                log.debug("createServer: setting vm bios type to ${biosType}")
+            }
             def postHeaders = getAuthenticatedBaseHeaders(connection)
             def postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:postBody, ignoreSSL:true)
             response = client.callJsonApi(

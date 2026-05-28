@@ -156,17 +156,29 @@ class VirtualMachineSync {
                         currentServer.powerState = powerState
                         save = true
                     }
-                    def primaryIp = vmDetails.ipV4 ? vmDetails.ipV4.first() : ''
-                    if (currentServer.externalIp != primaryIp) {
-                        if (currentServer.externalIp == currentServer.sshHost) {
+                    def primaryIp = vmDetails.ipV4?.find { it } ?: ''
+                    if (primaryIp) {
+                        // OLVM guest agent reported an IP — update all IP fields
+                        if (currentServer.externalIp != primaryIp) {
+                            if (currentServer.externalIp == currentServer.sshHost) {
                                 currentServer.sshHost = primaryIp
+                            }
+                            currentServer.externalIp = primaryIp
+                            save = true
                         }
-                        currentServer.externalIp = primaryIp
-                        save = true
-                    }
-                    if (currentServer.internalIp != primaryIp) {
-                        currentServer.internalIp = primaryIp
-                        save = true
+                        if (currentServer.internalIp != primaryIp) {
+                            currentServer.internalIp = primaryIp
+                            save = true
+                        }
+                    } else {
+                        // No IP from OLVM (no guest agent) — do not overwrite agent-registered IPs.
+                        // Propagate internalIp -> sshHost if the Morpheus agent registered an IP
+                        // but sshHost was never set (e.g. DHCP provisioning without guest agent).
+                        if (!currentServer.sshHost && currentServer.internalIp) {
+                            log.info("VirtualMachineSync: promoting internalIp ${currentServer.internalIp} to sshHost for ${currentServer.name}")
+                            currentServer.sshHost = currentServer.internalIp
+                            save = true
+                        }
                     }
 
                     if (save) {

@@ -34,6 +34,7 @@ class OlvmCloudPlugin extends Plugin {
 
     @Override
     void initialize() {
+        OlvmVersion.setMDC()
         this.setName("OLVM Cloud")
         this.registerProvider(new OlvmCloudProvider(this,this.morpheus))
         this.registerProvider(new OlvmProvisionProvider(this,this.morpheus))

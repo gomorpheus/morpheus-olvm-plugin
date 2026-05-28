@@ -1553,76 +1553,28 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	// }
 
 	/**
-	 * Convert netmask to CIDR prefix
+	 * Convert netmask to CIDR prefix length.
 	 * @param netmask Netmask in dotted decimal format (e.g., 255.255.252.0)
 	 * @return CIDR prefix (e.g., 22)
 	 */
-	// protected Integer netmaskToCidr(String netmask) {
-	// 	if (!netmask) {
-	// 		return 24
-	// 	}
-		
-	// 	// Common netmask to CIDR mappings
-	// 	def netmaskMap = [
-	// 		'255.255.255.255': 32,
-	// 		'255.255.255.254': 31,
-	// 		'255.255.255.252': 30,
-	// 		'255.255.255.248': 29,
-	// 		'255.255.255.240': 28,
-	// 		'255.255.255.224': 27,
-	// 		'255.255.255.192': 26,
-	// 		'255.255.255.128': 25,
-	// 		'255.255.255.0': 24,
-	// 		'255.255.254.0': 23,
-	// 		'255.255.252.0': 22,  // ← Your netmask
-	// 		'255.255.248.0': 21,
-	// 		'255.255.240.0': 20,
-	// 		'255.255.224.0': 19,
-	// 		'255.255.192.0': 18,
-	// 		'255.255.128.0': 17,
-	// 		'255.255.0.0': 16,
-	// 		'255.254.0.0': 15,
-	// 		'255.252.0.0': 14,
-	// 		'255.248.0.0': 13,
-	// 		'255.240.0.0': 12,
-	// 		'255.224.0.0': 11,
-	// 		'255.192.0.0': 10,
-	// 		'255.128.0.0': 9,
-	// 		'255.0.0.0': 8
-	// 	]
-		
-	// 	def cidr = netmaskMap[netmask]
-	// 	if (cidr) {
-	// 		log.debug("Converted netmask ${netmask} to CIDR /${cidr}")
-	// 		return cidr
-	// 	}
-		
-	// 	// Fallback: try to calculate
-	// 	try {
-	// 		def parts = netmask.split('\\.')
-	// 		if (parts.size() != 4) {
-	// 			return 24
-	// 		}
-			
-	// 		def binary = parts.collect { 
-	// 			Integer.parseInt(it).toString(2).padLeft(8, '0') 
-	// 		}.join('')
-			
-	// 		def count = 0
-	// 		for (int i = 0; i < binary.length(); i++) {
-	// 			if (binary.charAt(i) == '1' as char) {
-	// 				count++
-	// 			}
-	// 		}
-			
-	// 		log.debug("Calculated netmask ${netmask} to CIDR /${count}")
-	// 		return count
-			
-	// 	} catch (Exception e) {
-	// 		log.error("Error converting netmask ${netmask} to CIDR: ${e.message}", e)
-	// 		return 24
-	// 	}
-	// }
+	protected Integer netmaskToCidr(String netmask) {
+		if (!netmask) {
+			return 24
+		}
+		try {
+			def parts = netmask.split('\\.')
+			if (parts.size() != 4) {
+				return 24
+			}
+			def binary = parts.collect {
+				Integer.parseInt(it).toString(2).padLeft(8, '0')
+			}.join('')
+			return binary.count('1')
+		} catch (Exception e) {
+			log.error("Error converting netmask ${netmask} to CIDR: ${e.message}", e)
+			return 24
+		}
+	}
 
 
 
@@ -1695,103 +1647,94 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	}
 
 		/**
-	* Enhance cloud-init config with network configuration ONLY
-	* Morpheus already handles hostname, so we only add network config
-	*/
+	 * Enhance cloud-init config with static network configuration using NetworkManager keyfile format.
+	 * Keyfile format is supported on OEL/RHEL 7, 8, and 9 (where legacy ifcfg is deprecated).
+	 * Morpheus already handles hostname, so we only add network config here.
+	 */
 	protected String enhanceCloudInitConfig(String cloudConfig, def hostname, def domainName, def networkConfig) {
 		if (!cloudConfig) {
 			cloudConfig = "#cloud-config\n"
 		}
-		
-		// Parse existing cloud-config to check if write_files already exists
-		def hasWriteFiles = cloudConfig.contains('write_files:')
-		def hasRuncmd = cloudConfig.contains('runcmd:')
-		
-		def additionalConfig = ""
-		
-		// Build write_files section
-		def writeFilesContent = []
-		def runcmdContent = []
-		
-		// ========================================================================
-		// NETWORK CONFIGURATION (if static IP)
-		// ========================================================================
-		// NOTE: We DON'T set hostname here - Morpheus already sets it in base cloud-config
+
+		def writeFilesEntries = []
+		def runcmdEntries = []
+
 		def primaryInterface = networkConfig?.primaryInterface
 		if (primaryInterface && primaryInterface.doStatic && !primaryInterface.doDhcp) {
 			def ipAddress = primaryInterface.ipAddress
 			def netmask = primaryInterface.netmask
 			def gateway = primaryInterface.gateway
 			def nicName = primaryInterface.name ?: 'eth0'
-			
+
 			if (ipAddress && netmask) {
 				log.debug("Adding static network configuration to cloud-init: ${nicName}=${ipAddress}")
-				
-				// Build ifcfg-eth0 content (use proper string concatenation to avoid indentation issues)
-				def ifcfgLines = []
-				ifcfgLines << "DEVICE=${nicName}"
-				ifcfgLines << "BOOTPROTO=static"
-				ifcfgLines << "ONBOOT=yes"
-				ifcfgLines << "TYPE=Ethernet"
-				ifcfgLines << "IPADDR=${ipAddress}"
-				ifcfgLines << "NETMASK=${netmask}"
-				
+
+				def cidr = netmaskToCidr(netmask)
+
+				// Build NetworkManager keyfile content (supported on OEL/RHEL 7, 8, and 9)
+				def nmLines = []
+				nmLines << "[connection]"
+				nmLines << "id=${nicName}"
+				nmLines << "type=ethernet"
+				nmLines << "interface-name=${nicName}"
+				nmLines << "autoconnect=yes"
+				nmLines << ""
+				nmLines << "[ethernet]"
+				nmLines << ""
+				nmLines << "[ipv4]"
+				nmLines << "method=manual"
+				nmLines << "address1=${ipAddress}/${cidr}"
 				if (gateway) {
-					ifcfgLines << "GATEWAY=${gateway}"
+					nmLines << "gateway=${gateway}"
 				}
-				
-				// Add DNS if provided
-				if (primaryInterface.dnsServers) {
-					def dnsServers = primaryInterface.dnsServers.split(',').collect { it.trim() }
-					dnsServers.eachWithIndex { dns, idx ->
-						ifcfgLines << "DNS${idx + 1}=${dns}"
-					}
+				def dnsServers = primaryInterface.dnsServers?.split(',')?.collect { it.trim() }?.findAll { it }
+				if (dnsServers) {
+					nmLines << "dns=${dnsServers.join(';')};"
 				}
-				
-				def ifcfgContent = ifcfgLines.join('\\n')
-				
-				// Build write_files entry with correct indentation
+				nmLines << ""
+				nmLines << "[ipv6]"
+				nmLines << "method=auto"
+
+				// Build write_files entry
 				def fileEntryLines = []
-				fileEntryLines << "  - path: /etc/sysconfig/network-scripts/ifcfg-${nicName}"
+				fileEntryLines << "  - path: /etc/NetworkManager/system-connections/${nicName}.nmconnection"
 				fileEntryLines << "    content: |"
-
-				// Add each line of ifcfg content with proper indentation (6 spaces)
-				ifcfgLines.each { line ->
-					fileEntryLines << "      ${line}"
-				}
-
-				fileEntryLines << "    permissions: '0644'"
+				nmLines.each { line -> fileEntryLines << "      ${line}" }
+				fileEntryLines << "    permissions: '0600'"
 				fileEntryLines << "    owner: root:root"
+				writeFilesEntries << fileEntryLines.join('\n')
 
-				def fileEntry = fileEntryLines.join('\n')
-				
-				writeFilesContent << fileEntry
-				
-				// Commands to apply network config
-				runcmdContent << "  - nmcli connection reload"
-				runcmdContent << "  - nmcli connection up ${nicName} || true"
-				runcmdContent << "  - systemctl restart NetworkManager"
+				runcmdEntries << "  - nmcli connection reload"
+				runcmdEntries << "  - nmcli connection up ${nicName} || nmcli connection up id ${nicName}"
 			}
 		}
-		
-		// ========================================================================
-		// BUILD FINAL CLOUD-CONFIG
-		// ========================================================================
-		if (writeFilesContent || runcmdContent) {
-			if (!hasWriteFiles && writeFilesContent) {
-				additionalConfig += "\nwrite_files:"
-				writeFilesContent.each { additionalConfig += "\n${it}" }
-			}
-			
-			if (!hasRuncmd && runcmdContent) {
-				additionalConfig += "\n\nruncmd:"
-				runcmdContent.each { additionalConfig += "\n${it}" }
-			}
-			
-			log.debug("Enhanced cloud-init with ${writeFilesContent.size()} files and ${runcmdContent.size()} commands")
+
+		if (!writeFilesEntries && !runcmdEntries) {
+			return cloudConfig
 		}
-		
-		return cloudConfig + additionalConfig
+
+		// Merge into existing write_files / runcmd sections, or append new sections.
+		// This ensures we don't silently skip config when those sections already exist.
+		if (writeFilesEntries) {
+			def newEntries = "\n" + writeFilesEntries.join('\n')
+			if (cloudConfig.contains('write_files:')) {
+				cloudConfig = cloudConfig.replace('write_files:', 'write_files:' + newEntries)
+			} else {
+				cloudConfig += "\nwrite_files:" + newEntries
+			}
+		}
+
+		if (runcmdEntries) {
+			def newCmds = "\n" + runcmdEntries.join('\n')
+			if (cloudConfig.contains('runcmd:')) {
+				cloudConfig = cloudConfig.replace('runcmd:', 'runcmd:' + newCmds)
+			} else {
+				cloudConfig += "\n\nruncmd:" + newCmds
+			}
+		}
+
+		log.debug("Enhanced cloud-init with ${writeFilesEntries.size()} files and ${runcmdEntries.size()} commands")
+		return cloudConfig
 	}
 
 	protected void runVirtualMachine(Cloud cloud, Object workloadRequest, Map runConfig, ProvisionResponse provisionResponse, Map opts) {

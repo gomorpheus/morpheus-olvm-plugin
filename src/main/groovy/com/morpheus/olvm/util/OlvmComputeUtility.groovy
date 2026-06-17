@@ -768,10 +768,13 @@ class OlvmComputeUtility {
             // Root (bootable) disk maps to rootVolume's datastore (user-selected)
             def rootStorageDomainId = opts.rootVolume.datastore.externalId
             log.debug("createServer: root disk id=${bootableTemplateDisk.id} -> storage domain ${rootStorageDomainId}")
+            def sparse = opts.diskProvisioning != 'preallocated'
             def diskAttachmentList = []
             diskAttachmentList << [disk:[
                 id: bootableTemplateDisk.id,
                 'provisioned_size': opts.rootVolume.maxStorage,
+                format: 'cow',
+                sparse: sparse,
                 'storage_domains': ['storage_domain': [[id: rootStorageDomainId]]]
             ]]
 
@@ -797,6 +800,8 @@ class OlvmComputeUtility {
 
                 diskAttachmentList << [disk:[
                     id: nonBootableDisk.id,
+                    format: 'cow',
+                    sparse: sparse,
                     'storage_domains': ['storage_domain': [[id: targetDatastoreId]]]
                 ]]
             }
@@ -819,14 +824,26 @@ class OlvmComputeUtility {
                 memory:opts.maxMemory,
                 cpu:buildCpus(opts.workloadConfig),
                 nics:[nic:buildNetworkInterfaces(interfaces)],
-                'disk_attachments':['disk_attachment': diskAttachmentList]
+                'disk_attachments':['disk_attachment': diskAttachmentList],
+                stateless: opts.stateless ?: false,
             ]
             if (biosType) {
                 postBody.bios = [type: biosType]
                 log.debug("createServer: setting vm bios type to ${biosType}")
             }
+            if (opts.hostRef) {
+                postBody.placement_policy = [
+                    hosts: [host: [[id: opts.hostRef]]],
+                    affinity: opts.hostAffinity ?: 'migratable'
+                ]
+                log.info("createServer: host placement hostRef=${opts.hostRef}, affinity=${postBody.placement_policy.affinity}")
+            }
+            log.info("createServer: stateless=${opts.stateless}, diskProvisioning=${opts.diskProvisioning}, cloneType=${opts.cloneType}")
             def postHeaders = getAuthenticatedBaseHeaders(connection)
             def postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:postBody, ignoreSSL:true)
+            if (opts.cloneType == 'full') {
+                postReqOptions.queryParams = [clone: 'true']
+            }
             response = client.callJsonApi(
                 connection.apiUrl,
                 '/ovirt-engine/api/vms/',

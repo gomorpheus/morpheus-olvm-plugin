@@ -49,7 +49,55 @@ class OlvmOptionSourceProvider extends AbstractOptionSourceProvider {
 
     @Override
     List<String> getMethodNames() {
-        return new ArrayList<String>(['olvmDatacenters', 'olvmCloudDatacenters', 'olvmClusters', 'olvmTemplates', 'olvmCloudConfiguredDatacenter', 'olvmQcowImages'])
+        return new ArrayList<String>(['olvmDatacenters', 'olvmCloudDatacenters', 'olvmClusters', 'olvmTemplates', 'olvmCloudConfiguredDatacenter', 'olvmQcowImages', 'olvmHosts', 'olvmCloneTypes', 'olvmDiskProvisioningTypes', 'olvmHostAffinityTypes'])
+    }
+
+    def olvmCloneTypes(args) {
+        return [
+            [name: 'Linked Clone (thin, template-dependent)', value: 'linked', isDefault: true],
+            [name: 'Full Clone (independent copy)', value: 'full'],
+        ]
+    }
+
+    def olvmDiskProvisioningTypes(args) {
+        return [
+            [name: 'Thin (COW, sparse — supports snapshots)', value: 'thin', isDefault: true],
+            [name: 'Preallocated (COW, full allocation)', value: 'preallocated'],
+        ]
+    }
+
+    def olvmHostAffinityTypes(args) {
+        return [
+            [name: 'Migratable (soft preference, live migration allowed)', value: 'migratable', isDefault: true],
+            [name: 'User Migratable (only manual migration allowed)', value: 'user_migratable'],
+            [name: 'Pinned (hard pin, no migration)', value: 'pinned'],
+        ]
+    }
+
+    def olvmHosts(args) {
+        args = args instanceof Object[] ? args.getAt(0) : args
+        Cloud cloud = loadCloud(args)
+        def rtn = [[name: 'No preference (let OLVM decide)', value: '', isDefault: true]]
+
+        def filters = [
+            new DataFilter<String>('zone.id', cloud.id.toString()),
+            new DataFilter<String>('computeServerType.code', 'olvm-hypervisor')
+        ]
+        // When the user has already selected a cluster, filter hosts to only that cluster's members.
+        // clusterId is the Morpheus CloudPool.id, which is what olvmClusters returns as value — and
+        // what HostSync stores on ComputeServer.resourcePool.id.
+        if (args.clusterId) {
+            filters << new DataFilter<String>('resourcePool.id', args.clusterId.toString())
+        }
+
+        def result = morpheusContext.async.computeServer.search(
+            new DataQuery().withFilters(filters)
+        ).blockingGet()
+
+        for (host in result.items) {
+            rtn << [name: host.name, value: host.externalId]
+        }
+        return rtn
     }
 
     def olvmQcowImages(args) {

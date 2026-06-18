@@ -1134,6 +1134,12 @@ class OlvmComputeUtility {
                         rtn.success = true
                         rtn.data = serverDetail
                         pending = false
+                    } else if (opts.noAgent == true) {
+                        // Guest agent is not installed by configuration — no point waiting for IPs
+                        log.debug("checkServerReady: VM is up, skipping IP wait (noAgent=true)")
+                        rtn.success = true
+                        rtn.data = serverDetail
+                        pending = false
                     } else {
                         statusUpAttempts++
                         if (statusUpAttempts >= maxStatusUpAttempts) {

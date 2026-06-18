@@ -1,30 +1,77 @@
-## Morpheus OLVM Plugin
+# Morpheus OLVM Cloud Plugin
 
-This is the official Morpheus plugin for interacting with Oracle's Linux Virtualization Manager.  The plugin provides the ability to
-provision VMs, Docker Clusters, snapshots, etc within an OLVM environment.
+This plugin provides a full integration between Oracle Linux Virtualization Manager (OLVM) and [Morpheus](https://morpheusdata.com). It enables cloud inventory sync, VM provisioning, VM power and resize actions, and snapshot-based backups from within the Morpheus platform.
 
-### Requirements
-- Java 17
-- Gradle 8.3
+## Requirements
 
-### Building
+| Component | Minimum Version |
+|-----------|----------------|
+| Morpheus | 8.0.9 |
 
-This is a Morpheus plugin that leverages the `morpheus-plugin-core` which can be referenced by visiting [https://developer.morpheusdata.com](https://developer.morpheusdata.com). It is a groovy plugin designed to be uploaded into a Morpheus environment via the `Administration -> Integrations -> Plugins` section. To build this product from scratch simply run the shadowJar gradle task on java 17:
+## Installation
+
+1. Download the latest `.jar` from the [Releases](https://github.com/HewlettPackard/morpheus-olvm-plugin/releases) page, or [build it yourself](#building).
+2. In Morpheus, navigate to **Administration → Integrations → Plugins**.
+3. Click **Browse** and upload the `.jar` file.
+4. The **OLVM** cloud type will appear after the plugin loads.
+
+## Configuration
+
+When adding an OLVM cloud in Morpheus (**Infrastructure → Clouds → Add Cloud**), provide the following:
+
+| Field | Description |
+|-------|-------------|
+| **API URL** | OLVM API endpoint |
+| **Credentials** | Select local credentials or a stored username/password credential |
+| **Username** | OLVM username |
+| **Password** | OLVM password |
+| **Datacenter** | OLVM datacenter to inventory, or all datacenters |
+| **Inventory Existing Instances** | Inventory existing OLVM virtual machines |
+
+Credentials can also be stored as a Morpheus [Credential](https://docs.morpheusdata.com/en/latest/administration/credentials/credentials.html) and selected at cloud setup time.
+
+## Features
+
+### Cloud Sync
+
+The following resources are discovered and kept in sync from OLVM:
+
+- **Datacenters** — OLVM datacenters available to the configured account
+- **Clusters** — compute clusters within each datacenter
+- **Storage Domains** — OLVM storage domains exposed as Morpheus datastores
+- **Networks** — logical networks and VNIC profiles
+- **Hosts** — KVM hypervisor hosts
+- **Templates** — OLVM VM templates
+- **Virtual Machines** — managed and unmanaged VMs, including power state and resource metadata
+
+Any additions, updates, and removals in OLVM are automatically reflected in Morpheus on the next sync cycle.
+
+### Provisioning
+
+Virtual machines can be provisioned into OLVM directly from Morpheus using standard instance types and layouts. Supported operations include:
+
+- Create, start, stop, and delete VMs
+- Resize CPU, memory, storage, and network configuration
+- Select OLVM datacenters, clusters, templates, networks, and storage domains during provisioning
+- Provision Linux, Windows, Docker host, and Kubernetes node server types
+- Use QCOW2 virtual images and cloud-init customization
+
+### Backups
+
+OLVM VM snapshots are supported via the Morpheus backup framework. Supported operations include:
+
+- Create snapshot backups for VM disks
+- Delete backup snapshots from OLVM
+- Restore snapshots through the Morpheus restore workflow
+
+## Building
 
 ```bash
 ./gradlew shadowJar
 ```
 
-A jar will be produced in the `build/lib` folder that can be uploaded into a Morpheus environment.
+The plugin JAR will be written to `build/libs/`.
 
+## License
 
-### Configuring
-
-Once the plugin is loaded in the environment, OLVM becomes available as a cloud type when creating a new cloud in `Infrastructure -> Clouds`.
-
-The following information is required when adding an OLVM cloud:
-
-1. API URL: The endpoint to the OLVM api that you wish to integrate with.
-2. Username: An authorized OLVM user with api access.
-3. Password: Password for above username
-4. Datacenter: (optional) If you wish to scope your morpheus cloud to a single data center.  Defaults to `All`
+Copyright 2022 Morpheus Data, LLC. Licensed under the [Apache License, Version 2.0](LICENSE).

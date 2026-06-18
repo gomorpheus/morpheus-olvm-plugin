@@ -1760,24 +1760,27 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	 * - OEL/RHEL: writes a NetworkManager keyfile to /etc/NetworkManager/system-connections/ for static IP.
 	 *   DHCP works by default on OEL/RHEL via NetworkManager and needs no extra config.
 	 */
-	protected String enhanceCloudInitConfig(String cloudConfig, def hostname, def domainName, def networkConfig, def serverOs = null) {
+	protected String enhanceCloudInitConfig(String cloudConfig, def hostname, def domainName, def networkConfig, def serverOs = null, def virtualImage = null) {
 		if (!cloudConfig) {
 			cloudConfig = "#cloud-config\n"
 		}
 
-		// Suppress package operations on OLVM during first boot:
-		// - package_update: triggers yum/apt metadata download (~122-212 MB); on OEL can OOM the VM
-		// - package_upgrade: can upgrade the kernel and trigger an automatic reboot, which kills
-		//   cloud-init before scripts-user runs and the Morpheus agent is never installed
-		// - package_reboot_if_required: explicitly reboots after kernel upgrades, same problem
-		// - packages: even a single-package list (e.g. [curl]) causes dnf to download full repo
-		//   metadata (~200 MB on OEL9), which OOM-kills cloud-final before runcmd runs.
-		//   Required packages (e.g. curl) are already present on OLVM base images.
-		// All are safe to disable — packages can be updated post-provisioning.
-		if (cloudConfig =~ /(?m)^package_update:\s*true\s*$/) {
-			cloudConfig = cloudConfig.replaceAll(/(?m)^package_update:\s*true\s*$/, 'package_update: false')
-			log.info("enhanceCloudInitConfig: suppressed package_update: true to avoid OOM during provisioning")
-		}
+		// Determine whether this is a netplan (Ubuntu/Debian) or NM (OEL/RHEL) system.
+		// server.serverOs is unreliable for K8S cluster nodes: Morpheus may set it to a
+		// generic "Linux" OsType even when the VM runs Ubuntu. We therefore check multiple
+		// sources in priority order and treat any Ubuntu/Debian signal as authoritative.
+		def osNameLower     = serverOs?.name?.toLowerCase()                   ?: ''
+		def imgOsNameLower  = virtualImage?.osType?.name?.toLowerCase()       ?: ''
+		def imgNameLower    = virtualImage?.name?.toLowerCase()                ?: ''
+
+		def ubuntuSignal = { String s -> s.contains('ubuntu') || s.contains('debian') || s.contains('mint') }
+		def isUbuntu = ubuntuSignal(osNameLower) || ubuntuSignal(imgOsNameLower) || ubuntuSignal(imgNameLower)
+
+		// Ubuntu/Debian use netplan; OEL/RHEL use NetworkManager.
+		def isOel = !isUbuntu
+
+		// Suppress package operations that can trigger a mid-boot reboot on any OS,
+		// which would kill cloud-init before the Morpheus agent is installed.
 		if (cloudConfig =~ /(?m)^package_upgrade:\s*true\s*$/) {
 			cloudConfig = cloudConfig.replaceAll(/(?m)^package_upgrade:\s*true\s*$/, 'package_upgrade: false')
 			log.info("enhanceCloudInitConfig: suppressed package_upgrade: true to prevent mid-boot reboot before agent install")
@@ -1786,12 +1789,23 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			cloudConfig = cloudConfig.replaceAll(/(?m)^package_reboot_if_required:\s*true\s*$/, 'package_reboot_if_required: false')
 			log.info("enhanceCloudInitConfig: suppressed package_reboot_if_required: true to prevent mid-boot reboot before agent install")
 		}
-		// Strip the packages: list entirely — dnf on OEL loads full repo metadata even for one package,
-		// consuming enough memory to trigger the OOM killer and prevent runcmd from running.
-		if (cloudConfig =~ /(?ms)^packages:\n(^[ \t]*-[^\n]*\n)+/) {
-			cloudConfig = cloudConfig.replaceAll(/(?ms)^packages:\n(^[ \t]*-[^\n]*\n)+/, '')
-			log.info("enhanceCloudInitConfig: removed packages: list to prevent OOM during provisioning")
+
+		if (isOel) {
+			// OEL/RHEL-specific: suppress package_update and strip packages list to prevent OOM.
+			// dnf downloads full repo metadata (~200 MB on OEL9) even for a single package,
+			// which can OOM-kill cloud-final before runcmd runs. apt on Ubuntu does not have
+			// this problem, so these suppressions must not be applied to Ubuntu/Debian nodes
+			// (e.g. K8S cluster nodes) that rely on apt package installation during provisioning.
+			if (cloudConfig =~ /(?m)^package_update:\s*true\s*$/) {
+				cloudConfig = cloudConfig.replaceAll(/(?m)^package_update:\s*true\s*$/, 'package_update: false')
+				log.info("enhanceCloudInitConfig: suppressed package_update: true to avoid OOM during provisioning")
+			}
+			if (cloudConfig =~ /(?ms)^packages:\n(^[ \t]*-[^\n]*\n)+/) {
+				cloudConfig = cloudConfig.replaceAll(/(?ms)^packages:\n(^[ \t]*-[^\n]*\n)+/, '')
+				log.info("enhanceCloudInitConfig: removed packages: list to prevent OOM during provisioning")
+			}
 		}
+
 		// Fix schema type errors from the Morpheus core cloud-config template:
 		// disable_root and ssh_deletekeys must be booleans, not integer 0 or quoted string.
 		if (cloudConfig =~ /(?m)^disable_root:\s*0\s*$/) {
@@ -1810,17 +1824,19 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 
 		def primaryInterface = networkConfig?.primaryInterface
 		def nicName = primaryInterface?.name ?: 'eth0'
-		def osNameLower = serverOs?.name?.toLowerCase() ?: ''
-		// Only apply OEL/RHEL-specific network customizations. Ubuntu and other OS types
-		// use the core's default cloud-config network handling (same as all other cloud plugins).
-		def isOel = !osNameLower.contains('ubuntu') && !osNameLower.contains('debian') && !osNameLower.contains('mint')
-		log.info("enhanceCloudInitConfig: isNetplan=${!isOel}, osType='${serverOs?.name}', nic=${nicName}, doStatic=${primaryInterface?.doStatic}, doDhcp=${primaryInterface?.doDhcp}, ip=${primaryInterface?.ipAddress}")
+		def isNetplan = !isOel
+		log.info("enhanceCloudInitConfig: isNetplan=${isNetplan}, osType='${serverOs?.name}', imgOsType='${virtualImage?.osType?.name}', imgName='${virtualImage?.name}', nic=${nicName}, doStatic=${primaryInterface?.doStatic}, doDhcp=${primaryInterface?.doDhcp}, ip=${primaryInterface?.ipAddress}")
 
-		// For Ubuntu/Debian (netplan): write netplan YAML for static IP only via write_files.
+		// For Ubuntu/Debian (netplan): write netplan YAML for static IP via write_files.
 		// oVirt's cloud-init API only accepts custom_script (user-data); there is no supported
 		// way to pass network_data through oVirt's initialization API. For DHCP, Ubuntu's
 		// default cloud-init behavior is sufficient.
-		def isNetplan = !isOel
+		//
+		// IMPORTANT: we do NOT hard-code the NIC name. Ubuntu 20.04+ in OLVM/KVM uses
+		// predictable interface names (e.g., ens3, enp1s0) that differ from 'eth0' and are
+		// not known at provisioning time (they depend on PCI slot assignment). Using
+		// match.name: "e*" targets any ethernet interface (eth0, ens*, enp*, etc.), the same
+		// approach used for OEL via the interface-name=e*; glob in the NM keyfile.
 		if (isNetplan && primaryInterface && primaryInterface.doStatic && !primaryInterface.doDhcp) {
 			def ipAddress = primaryInterface.ipAddress
 			def netmask = primaryInterface.netmask
@@ -1828,12 +1844,14 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 
 			if (ipAddress && netmask) {
 				def cidr = resolveCidr(primaryInterface)
-				log.info("enhanceCloudInitConfig: Ubuntu static IP netplan: ${nicName}=${ipAddress}/${cidr}, gateway=${gateway}")
+				log.info("enhanceCloudInitConfig: Ubuntu static IP netplan (match e*): ${ipAddress}/${cidr}, gateway=${gateway}")
 				def netplanLines = []
 				netplanLines << "network:"
 				netplanLines << "  version: 2"
 				netplanLines << "  ethernets:"
-				netplanLines << "    ${nicName}:"
+				netplanLines << "    morpheus-static:"
+				netplanLines << "      match:"
+				netplanLines << "        name: \"e*\""
 				netplanLines << "      dhcp4: false"
 				netplanLines << "      addresses:"
 				netplanLines << "        - ${ipAddress}/${cidr}"
@@ -1854,6 +1872,25 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 				fileEntryLines << "  permissions: '0600'"
 				fileEntryLines << "  owner: root:root"
 				writeFilesEntries << fileEntryLines.join('\n')
+
+				// Prevent cloud-init from regenerating 50-cloud-init.yaml with DHCP on reboot,
+				// which would conflict with our static IP config.
+				def disableCiLines = []
+				disableCiLines << "- path: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg"
+				disableCiLines << "  content: |"
+				disableCiLines << "    network: {config: disabled}"
+				disableCiLines << "  permissions: '0644'"
+				disableCiLines << "  owner: root:root"
+				writeFilesEntries << disableCiLines.join('\n')
+
+				// Remove cloud-init's generated DHCP netplan BEFORE applying ours.
+				// Ubuntu 24.04 cloud images ship with /etc/netplan/50-cloud-init.yaml
+				// containing a named interface entry (e.g., ens3: dhcp4: true). With both
+				// files present, netplan sees two conflicting definitions for the same physical
+				// interface (one named, one via match.name glob) and refuses to apply, silently
+				// leaving the VM with no IP. Removing 50-cloud-init.yaml first ensures our
+				// 99-morpheus.yaml is the sole config when netplan apply runs.
+				runcmdEntries << "- rm -f /etc/netplan/50-cloud-init.yaml"
 				runcmdEntries << "- netplan apply"
 				runcmdEntries << "- |"
 				runcmdEntries << "  for i in \$(seq 1 30); do"
@@ -2358,7 +2395,8 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 					runConfig.hostname,
 					runConfig.domainName,
 					runConfig.networkConfig,
-					runConfig.serverOs
+					runConfig.serverOs,
+					runConfig.virtualImage
 				)
 
 				log.debug("insertVm - Starting VM with cloud-init only (no OLVM initialization)")

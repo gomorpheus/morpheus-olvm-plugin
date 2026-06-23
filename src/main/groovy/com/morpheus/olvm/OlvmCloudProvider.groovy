@@ -448,6 +448,7 @@ class OlvmCloudProvider implements CloudProvider {
 	 */
 	@Override
 	ServiceResponse refresh(Cloud cloudInfo) {
+		OlvmVersion.setMDC()
 		ServiceResponse rtn = ServiceResponse.prepare()
 		try {
 			def testResults = OlvmComputeUtility.testConnection(cloudInfo)

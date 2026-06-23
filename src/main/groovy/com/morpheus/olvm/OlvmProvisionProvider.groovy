@@ -76,6 +76,8 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	 */
 	@Override
 	ServiceResponse<PrepareWorkloadResponse> prepareWorkload(Workload workload, WorkloadRequest workloadRequest, Map opts) {
+		OlvmVersion.setMDC()
+		log.debug("prepareWorkload: workload=${workload?.id}, server=${workload?.server?.id}, platform=${workload?.server?.platform}")
 		ServiceResponse<PrepareWorkloadResponse> resp = new ServiceResponse<>()
 		resp.data = new PrepareWorkloadResponse(workload: workload, options: [sendIp: false])
 		ComputeServer server = workload.server
@@ -87,13 +89,17 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 
 		// lets figure out what image we are deploying
 		 Map connection = OlvmComputeUtility.getToken(server.cloud, morpheus)
+		 log.debug("prepareWorkload: connection acquired: ${connection != null}, apiUrl=${connection?.apiUrl}")
 		 def imageType = workload.getConfigMap().imageType ?: 'default'
+		 log.debug("prepareWorkload: imageType=${imageType}")
 		 def virtualImage = getWorkloadImage(workload, opts)
+		 log.debug("prepareWorkload: virtualImage=${virtualImage?.id} (${virtualImage?.name}), imageType=${virtualImage?.imageType}")
 		 def config = workload.configMap
 		 if (virtualImage) {
 			 //this ensures the image is set correctly for provisioning as it enters runWorkload
 			 workload.server.sourceImage = virtualImage
 			 VirtualImageLocation location = ensureVirtualImageLocation(connection, virtualImage, server.cloud)
+			 log.debug("prepareWorkload: virtualImageLocation=${location?.id}, externalId=${location?.externalId}")
 			 resp.data.setVirtualImageLocation(location)
 
 			 if (virtualImage.osType?.name?.contains('ubuntu') && MorpheusUtils.compareVersions(virtualImage.osType?.osVersion, '16.04') >= 0) {
@@ -102,10 +108,12 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			 resp.success = true
 		 }
 		 else {
+			 log.warn("prepareWorkload: Virtual Image not found for workload=${workload?.id}, config=${workload?.getConfigMap()}")
 			 resp.success = false
 			 resp.msg = "Virtual Image not found"
 		 }
 
+		log.debug("prepareWorkload: returning success=${resp.success}, msg=${resp.msg}")
 		return resp
 	}
 
@@ -663,29 +671,32 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 		try {
 			def serverDetails = getServerDetails(server)
 
-			// update IP address if necessary
-			if(serverDetails.success == true && serverDetails.data.publicIp) {
+			// Prefer IP reported by OLVM guest agent.
+			// Fall back to server.sshHost — the Morpheus agent sets this when it calls home,
+			// so it always holds the live DHCP address even when no guest agent is installed.
+			def privateIp = serverDetails.data?.privateIp ?: server.sshHost
+			def publicIp  = serverDetails.data?.publicIp  ?: server.sshHost
+			log.debug("finalizeHost: privateIp=${privateIp} (olvmIp=${serverDetails.data?.privateIp}, sshHost=${server.sshHost})")
+
+			if (privateIp) {
 				def doSave = false
-				def privateIp = serverDetails.data.privateIp
-				def publicIp = serverDetails.data.publicIp
-				if(server.internalIp != privateIp) {
+				if (server.internalIp != privateIp) {
 					server.internalIp = privateIp
 					doSave = true
 				}
-				if(serverDetails.data.externalIp != publicIp) {
+				if (server.externalIp != publicIp) {
 					server.externalIp = publicIp
 					doSave = true
 				}
-
-				if(doSave) {
+				if (doSave) {
 					morpheus.async.computeServer.bulkSave([server]).blockingGet()
 				}
-				rtn.success = true
 			}
+			rtn.success = serverDetails.success
 		} catch(e) {
 			rtn.success = false
 			rtn.msg = "Error in finalizing server: ${e.message}"
-			log.error("Error in finalizeWorkload: {}", e, e)
+			log.error("Error in finalizeHost: {}", e, e)
 		}
 
 		return rtn
@@ -876,23 +887,32 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	 */
 	@Override
 	ServiceResponse<ProvisionResponse> runWorkload(Workload workload, WorkloadRequest workloadRequest, Map opts) {
-		log.debug "runWorkload: ${workload} ${workloadRequest} ${opts}"
+		OlvmVersion.setMDC()
+		log.debug "runWorkload: workload=${workload?.id}, server=${workload?.server?.id}"
 		Map connection = opts.connection
 		ProvisionResponse provisionResponse = new ProvisionResponse(success: true)
 		ComputeServer server = workload.server
 		try {
 			Cloud cloud = server.cloud
 			if (!connection) {
+				log.debug("runWorkload: acquiring connection for cloud=${cloud?.id}")
 				connection = OlvmComputeUtility.getToken(cloud, morpheus)
+				log.debug("runWorkload: connection acquired: ${connection != null}, apiUrl=${connection?.apiUrl}")
 			}
 			VirtualImage virtualImage = server.sourceImage
+			log.debug("runWorkload: virtualImage=${virtualImage?.id} (${virtualImage?.name}), server.platform=${server.platform}, agentMode=${cloud.agentMode}")
 			def runConfig = buildWorkloadRunConfig(workload, workloadRequest, virtualImage, connection, opts)
+			log.debug("runWorkload: runConfig built - name=${runConfig.name}, imageRef=${runConfig.imageRef}, clusterRef=${runConfig.clusterRef}, datacenterRef=${runConfig.datacenterRef}, noAgent=${runConfig.noAgent}, installAgent=${runConfig.installAgent}")
 			runVirtualMachine(cloud, workloadRequest, runConfig, provisionResponse, opts + [connection:connection])
+			log.debug("runWorkload: runVirtualMachine complete - provisionResponse.success=${provisionResponse.success}, externalId=${provisionResponse.externalId}")
 			log.info("Checking Server Interfaces....")
 			workload.server.interfaces?.each { netInt ->
 				log.info("Net Interface: ${netInt.id} -> Network: ${netInt.network?.id}")
 			}
 			provisionResponse.noAgent = opts.noAgent ?: false
+			if (!provisionResponse.success) {
+				return new ServiceResponse(success: false, msg: provisionResponse.message ?: 'VM provisioning failed', data: provisionResponse)
+			}
 			return new ServiceResponse<ProvisionResponse>(success: true, data: provisionResponse)
 		}
 		catch (Throwable t) {
@@ -1127,7 +1147,8 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	}
 
 	def finalizeVm(Map runConfig, ProvisionResponse provisionResponse, Map runResults) {
-		log.debug("runTask onComplete: provisionResponse: ${provisionResponse}")
+		OlvmVersion.setMDC()
+		log.debug("finalizeVm: provisionResponse.success=${provisionResponse.success}, sshHost=${runResults.sshHost}, serverId=${runConfig.serverId}")
 		ComputeServer server = morpheus.async.computeServer.get(runConfig.serverId).blockingGet()
 		try {
 			if(provisionResponse.success == true) {
@@ -1143,7 +1164,10 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 					server.sshPassword = runResults.newPassword
 				server.capacityInfo = new ComputeCapacityInfo(maxCores:1, maxMemory:runConfig.maxMemory,
 					maxStorage:runConfig.maxStorage)
+				log.debug("finalizeVm: saving server ${server.id} with status=provisioned, sshHost=${server.sshHost}, managed=${server.managed}")
 				saveAndGet(server)
+			} else {
+				log.warn("finalizeVm: skipping finalize because provisionResponse.success is false")
 			}
 		}
 		catch(Throwable t) {
@@ -1160,6 +1184,47 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	 */
 	@Override
 	ServiceResponse finalizeWorkload(Workload workload) {
+		// Re-fetch the server to get the freshest sshHost value (set by agent call-home).
+		def server = morpheus.async.computeServer.get(workload.server.id).blockingGet() ?: workload.server
+		if (!server) {
+			return ServiceResponse.success()
+		}
+		if (server.internalIp) {
+			log.debug("finalizeWorkload: server ${server.id} already has internalIp=${server.internalIp}, nothing to do")
+			return ServiceResponse.success()
+		}
+
+		// Primary source: Morpheus agent called home and set sshHost.
+		def ipToUse = server.sshHost
+
+		// Fallback: query the OLVM API for the IP reported by qemu-guest-agent.
+		// This works when qemu-guest-agent is installed in the VM template, even if
+		// the Morpheus agent can't reach the appliance (e.g. dev/NAT environments).
+		if (!ipToUse && server.externalId) {
+			log.info("finalizeWorkload: sshHost is null for server ${server.id}, querying OLVM API for current IP")
+			try {
+				def connection = OlvmComputeUtility.getToken(server.cloud, morpheus)
+				def serverDetail = OlvmComputeUtility.getServerDetail([server: server, connection: connection])
+				def olvmIp = serverDetail?.data?.ipV4?.find { it }
+				if (olvmIp) {
+					log.info("finalizeWorkload: got IP from OLVM API: ${olvmIp} (server ${server.id})")
+					ipToUse = olvmIp
+				} else {
+					log.warn("finalizeWorkload: OLVM API returned no IP for server ${server.id} " +
+						"(externalId=${server.externalId}) — install qemu-guest-agent in the VM template " +
+						"or ensure the Morpheus appliance URL is reachable from the VM network")
+				}
+			} catch (Exception e) {
+				log.error("finalizeWorkload: error querying OLVM API for IP (server ${server.id}): ${e.message}", e)
+			}
+		}
+
+		if (ipToUse) {
+			log.info("finalizeWorkload: setting internalIp=${ipToUse} externalIp=${ipToUse} for server ${server.id}")
+			server.internalIp = ipToUse
+			server.externalIp = ipToUse
+			morpheus.async.computeServer.bulkSave([server]).blockingGet()
+		}
 		return ServiceResponse.success()
 	}
 
@@ -1217,25 +1282,40 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	 */
 	@Override
 	ServiceResponse<ProvisionResponse> getServerDetails(ComputeServer server) {
+		OlvmVersion.setMDC()
 		ProvisionResponse rtn = new ProvisionResponse()
 		def serverUuid = server.externalId
-		if(server && serverUuid) {
-			 Map connection = OlvmComputeUtility.getToken(server.cloud, morpheus)
-			 def serverDetails = OlvmComputeUtility.checkServerReady([connection:connection, server:server])
-			 if (serverDetails.success && serverDetails.data) {
-				 rtn.externalId = serverUuid
-				 rtn.success = serverDetails.success
-				 rtn.privateIp = serverDetails.data.ipV4?.first()
-				 rtn.publicIp = rtn.privateIp
-				 rtn.hostname = serverDetails.data.hostname
-				 return ServiceResponse.success(rtn)
-			 } else {
-				 return ServiceResponse.error("Server not ready/does not exist")
-			 }
-		}
-		else {
+		if (!server || !serverUuid) {
 			return ServiceResponse.error("Could not find server uuid")
 		}
+		Map connection = OlvmComputeUtility.getToken(server.cloud, morpheus)
+		// The VM was already verified as running by insertVm/checkServerReady inside runWorkload.
+		// Calling checkServerReady again here would time out if the VM is mid-reboot (e.g. Ubuntu
+		// cloud-init first-boot), causing a false "Server not ready" failure.
+		// Do a single direct lookup instead. If the VM is temporarily between states (rebooting),
+		// return success with no IP — finalizeWorkload will capture the DHCP address from the
+		// Morpheus agent call-home once provisioning completes.
+		def serverDetails = OlvmComputeUtility.getServerDetail([connection:connection, server:server])
+		rtn.externalId = serverUuid
+		rtn.success = true
+		if (serverDetails.success && serverDetails.data) {
+			// Prefer IP reported by OLVM guest agent; fall back to interface IP (static),
+			// then internalIp, then sshHost (set by Morpheus agent call-home on DHCP VMs)
+			rtn.privateIp = serverDetails.data.ipV4?.find { it } ?:
+				server.interfaces?.find { it.primaryInterface }?.ipAddress ?:
+				server.internalIp ?:
+				server.sshHost
+			rtn.publicIp = rtn.privateIp
+			rtn.hostname = serverDetails.data.hostname
+			log.info("getServerDetails: ip=${rtn.privateIp} (olvm=${serverDetails.data.ipV4}, interfaceIp=${server.interfaces?.find{it.primaryInterface}?.ipAddress}, internalIp=${server.internalIp}, sshHost=${server.sshHost})")
+		} else {
+			// VM is temporarily unreachable (rebooting after cloud-init?). Proceed without IP;
+			// the static interface IP or finalizeWorkload fallback will populate it later.
+			rtn.privateIp = server.interfaces?.find { it.primaryInterface }?.ipAddress ?: server.internalIp
+			rtn.publicIp = rtn.privateIp
+			log.info("getServerDetails: VM ${serverUuid} not immediately reachable (may be rebooting) - proceeding without IP, will capture in finalizeWorkload")
+		}
+		return ServiceResponse.success(rtn)
 	}
 
 	/**
@@ -1441,7 +1521,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			workloadConfig    : serverConfig
 		]
 
-		log.debug("buildHostRunConfig - Cloud-init content: ${runConfig.cloudConfig}")
+		log.debug("buildHostRunConfig - Cloud-init config length: ${runConfig.cloudConfig?.length()}")
 
 		return runConfig
 	}
@@ -1474,10 +1554,11 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			installAgent      : (opts.config?.containsKey("noAgent") == false || (opts.config?.containsKey("noAgent") && opts.config.noAgent != true)),
 			userConfig        : workloadRequest.usersConfiguration,
 			cloudConfig	      : workloadRequest.cloudConfigUser,
+			cloudConfigNetwork: workloadRequest.cloudConfigNetwork,
 			networkConfig	  : workloadRequest.networkConfiguration
 		]
 
-		log.debug("buildWorkloadRunConfig - Cloud-init content: ${runConfig.cloudConfig}")
+		log.debug("buildWorkloadRunConfig - Cloud-init config length: ${runConfig.cloudConfig?.length()}")
 
 		return runConfig
 	}
@@ -1553,76 +1634,54 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	// }
 
 	/**
-	 * Convert netmask to CIDR prefix
+	 * Convert netmask to CIDR prefix length.
 	 * @param netmask Netmask in dotted decimal format (e.g., 255.255.252.0)
-	 * @return CIDR prefix (e.g., 22)
+	 * @return CIDR prefix (e.g., 22), or 24 as a safe default if netmask is missing/invalid
 	 */
-	// protected Integer netmaskToCidr(String netmask) {
-	// 	if (!netmask) {
-	// 		return 24
-	// 	}
-		
-	// 	// Common netmask to CIDR mappings
-	// 	def netmaskMap = [
-	// 		'255.255.255.255': 32,
-	// 		'255.255.255.254': 31,
-	// 		'255.255.255.252': 30,
-	// 		'255.255.255.248': 29,
-	// 		'255.255.255.240': 28,
-	// 		'255.255.255.224': 27,
-	// 		'255.255.255.192': 26,
-	// 		'255.255.255.128': 25,
-	// 		'255.255.255.0': 24,
-	// 		'255.255.254.0': 23,
-	// 		'255.255.252.0': 22,  // ← Your netmask
-	// 		'255.255.248.0': 21,
-	// 		'255.255.240.0': 20,
-	// 		'255.255.224.0': 19,
-	// 		'255.255.192.0': 18,
-	// 		'255.255.128.0': 17,
-	// 		'255.255.0.0': 16,
-	// 		'255.254.0.0': 15,
-	// 		'255.252.0.0': 14,
-	// 		'255.248.0.0': 13,
-	// 		'255.240.0.0': 12,
-	// 		'255.224.0.0': 11,
-	// 		'255.192.0.0': 10,
-	// 		'255.128.0.0': 9,
-	// 		'255.0.0.0': 8
-	// 	]
-		
-	// 	def cidr = netmaskMap[netmask]
-	// 	if (cidr) {
-	// 		log.debug("Converted netmask ${netmask} to CIDR /${cidr}")
-	// 		return cidr
-	// 	}
-		
-	// 	// Fallback: try to calculate
-	// 	try {
-	// 		def parts = netmask.split('\\.')
-	// 		if (parts.size() != 4) {
-	// 			return 24
-	// 		}
-			
-	// 		def binary = parts.collect { 
-	// 			Integer.parseInt(it).toString(2).padLeft(8, '0') 
-	// 		}.join('')
-			
-	// 		def count = 0
-	// 		for (int i = 0; i < binary.length(); i++) {
-	// 			if (binary.charAt(i) == '1' as char) {
-	// 				count++
-	// 			}
-	// 		}
-			
-	// 		log.debug("Calculated netmask ${netmask} to CIDR /${count}")
-	// 		return count
-			
-	// 	} catch (Exception e) {
-	// 		log.error("Error converting netmask ${netmask} to CIDR: ${e.message}", e)
-	// 		return 24
-	// 	}
-	// }
+	protected Integer netmaskToCidr(String netmask) {
+		if (!netmask || netmask == '0.0.0.0') {
+			return 24
+		}
+		try {
+			def parts = netmask.split('\\.')
+			if (parts.size() != 4) {
+				return 24
+			}
+			def binary = parts.collect {
+				Integer.parseInt(it).toString(2).padLeft(8, '0')
+			}.join('')
+			def cidr = binary.count('1')
+			return cidr > 0 ? cidr : 24
+		} catch (Exception e) {
+			log.error("Error converting netmask ${netmask} to CIDR: ${e.message}", e)
+			return 24
+		}
+	}
+
+	/**
+	 * Resolve CIDR prefix for a network interface, using subnet/network metadata first
+	 * and falling back to netmask conversion. Logs a warning if all sources are bogus.
+	 */
+	protected Integer resolveCidr(primaryInterface) {
+		def cidrFromSubnetPrefixLen = primaryInterface.subnet?.prefixLength as Integer
+		if (cidrFromSubnetPrefixLen && cidrFromSubnetPrefixLen >= 8) {
+			return cidrFromSubnetPrefixLen
+		}
+		if (primaryInterface.subnet?.cidr?.contains('/')) {
+			def parsed = primaryInterface.subnet.cidr.split('/')[1] as Integer
+			if (parsed >= 8) return parsed
+		}
+		if (primaryInterface.network?.cidr?.contains('/')) {
+			def parsed = primaryInterface.network.cidr.split('/')[1] as Integer
+			if (parsed >= 8) return parsed
+		}
+		def cidr = netmaskToCidr(primaryInterface.netmask as String)
+		if (cidr < 8) {
+			log.warn("enhanceCloudInitConfig: bogus CIDR from all sources (subnetPrefixLen=${primaryInterface.subnet?.prefixLength}, subnetCidr=${primaryInterface.subnet?.cidr}, networkCidr=${primaryInterface.network?.cidr}, netmask=${primaryInterface.netmask}); defaulting to /24. Configure the network CIDR in Morpheus.")
+			return 24
+		}
+		return cidr
+	}
 
 
 
@@ -1695,103 +1754,327 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	}
 
 		/**
-	* Enhance cloud-init config with network configuration ONLY
-	* Morpheus already handles hostname, so we only add network config
-	*/
-	protected String enhanceCloudInitConfig(String cloudConfig, def hostname, def domainName, def networkConfig) {
+	 * Enhance cloud-init config with static network configuration.
+	 * - Ubuntu (18.04+): writes a netplan YAML to /etc/netplan/99-morpheus.yaml for both DHCP and static IP,
+	 *   since Ubuntu's netplan won't enable DHCP4 unless explicitly told to.
+	 * - OEL/RHEL: writes a NetworkManager keyfile to /etc/NetworkManager/system-connections/ for static IP.
+	 *   DHCP works by default on OEL/RHEL via NetworkManager and needs no extra config.
+	 */
+	protected String enhanceCloudInitConfig(String cloudConfig, def hostname, def domainName, def networkConfig, def serverOs = null) {
 		if (!cloudConfig) {
 			cloudConfig = "#cloud-config\n"
 		}
-		
-		// Parse existing cloud-config to check if write_files already exists
-		def hasWriteFiles = cloudConfig.contains('write_files:')
-		def hasRuncmd = cloudConfig.contains('runcmd:')
-		
-		def additionalConfig = ""
-		
-		// Build write_files section
-		def writeFilesContent = []
-		def runcmdContent = []
-		
-		// ========================================================================
-		// NETWORK CONFIGURATION (if static IP)
-		// ========================================================================
-		// NOTE: We DON'T set hostname here - Morpheus already sets it in base cloud-config
+
+		// Suppress package operations on OLVM during first boot:
+		// - package_update: triggers yum/apt metadata download (~122-212 MB); on OEL can OOM the VM
+		// - package_upgrade: can upgrade the kernel and trigger an automatic reboot, which kills
+		//   cloud-init before scripts-user runs and the Morpheus agent is never installed
+		// - package_reboot_if_required: explicitly reboots after kernel upgrades, same problem
+		// - packages: even a single-package list (e.g. [curl]) causes dnf to download full repo
+		//   metadata (~200 MB on OEL9), which OOM-kills cloud-final before runcmd runs.
+		//   Required packages (e.g. curl) are already present on OLVM base images.
+		// All are safe to disable — packages can be updated post-provisioning.
+		if (cloudConfig =~ /(?m)^package_update:\s*true\s*$/) {
+			cloudConfig = cloudConfig.replaceAll(/(?m)^package_update:\s*true\s*$/, 'package_update: false')
+			log.info("enhanceCloudInitConfig: suppressed package_update: true to avoid OOM during provisioning")
+		}
+		if (cloudConfig =~ /(?m)^package_upgrade:\s*true\s*$/) {
+			cloudConfig = cloudConfig.replaceAll(/(?m)^package_upgrade:\s*true\s*$/, 'package_upgrade: false')
+			log.info("enhanceCloudInitConfig: suppressed package_upgrade: true to prevent mid-boot reboot before agent install")
+		}
+		if (cloudConfig =~ /(?m)^package_reboot_if_required:\s*true\s*$/) {
+			cloudConfig = cloudConfig.replaceAll(/(?m)^package_reboot_if_required:\s*true\s*$/, 'package_reboot_if_required: false')
+			log.info("enhanceCloudInitConfig: suppressed package_reboot_if_required: true to prevent mid-boot reboot before agent install")
+		}
+		// Strip the packages: list entirely — dnf on OEL loads full repo metadata even for one package,
+		// consuming enough memory to trigger the OOM killer and prevent runcmd from running.
+		if (cloudConfig =~ /(?ms)^packages:\n(^[ \t]*-[^\n]*\n)+/) {
+			cloudConfig = cloudConfig.replaceAll(/(?ms)^packages:\n(^[ \t]*-[^\n]*\n)+/, '')
+			log.info("enhanceCloudInitConfig: removed packages: list to prevent OOM during provisioning")
+		}
+		// Fix schema type errors from the Morpheus core cloud-config template:
+		// disable_root and ssh_deletekeys must be booleans, not integer 0 or quoted string.
+		if (cloudConfig =~ /(?m)^disable_root:\s*0\s*$/) {
+			cloudConfig = cloudConfig.replaceAll(/(?m)^disable_root:\s*0\s*$/, 'disable_root: false')
+			log.info("enhanceCloudInitConfig: fixed disable_root: 0 -> false")
+		}
+		if (cloudConfig =~ /(?m)^ssh_deletekeys:\s*'false'\s*$/) {
+			cloudConfig = cloudConfig.replaceAll(/(?m)^ssh_deletekeys:\s*'false'\s*$/, 'ssh_deletekeys: false')
+			log.info("enhanceCloudInitConfig: fixed ssh_deletekeys: 'false' -> false")
+		}
+
+		log.debug("enhanceCloudInitConfig: cloud-config content:\n${cloudConfig}")
+
+		def writeFilesEntries = []
+		def runcmdEntries = []
+
 		def primaryInterface = networkConfig?.primaryInterface
-		if (primaryInterface && primaryInterface.doStatic && !primaryInterface.doDhcp) {
+		def nicName = primaryInterface?.name ?: 'eth0'
+		def osNameLower = serverOs?.name?.toLowerCase() ?: ''
+		// Only apply OEL/RHEL-specific network customizations. Ubuntu and other OS types
+		// use the core's default cloud-config network handling (same as all other cloud plugins).
+		def isOel = !osNameLower.contains('ubuntu') && !osNameLower.contains('debian') && !osNameLower.contains('mint')
+		log.info("enhanceCloudInitConfig: isNetplan=${!isOel}, osType='${serverOs?.name}', nic=${nicName}, doStatic=${primaryInterface?.doStatic}, doDhcp=${primaryInterface?.doDhcp}, ip=${primaryInterface?.ipAddress}")
+
+		// For Ubuntu/Debian (netplan): write netplan YAML for static IP only via write_files.
+		// oVirt's cloud-init API only accepts custom_script (user-data); there is no supported
+		// way to pass network_data through oVirt's initialization API. For DHCP, Ubuntu's
+		// default cloud-init behavior is sufficient.
+		def isNetplan = !isOel
+		if (isNetplan && primaryInterface && primaryInterface.doStatic && !primaryInterface.doDhcp) {
 			def ipAddress = primaryInterface.ipAddress
 			def netmask = primaryInterface.netmask
 			def gateway = primaryInterface.gateway
-			def nicName = primaryInterface.name ?: 'eth0'
-			
+
+			if (ipAddress && netmask) {
+				def cidr = resolveCidr(primaryInterface)
+				log.info("enhanceCloudInitConfig: Ubuntu static IP netplan: ${nicName}=${ipAddress}/${cidr}, gateway=${gateway}")
+				def netplanLines = []
+				netplanLines << "network:"
+				netplanLines << "  version: 2"
+				netplanLines << "  ethernets:"
+				netplanLines << "    ${nicName}:"
+				netplanLines << "      dhcp4: false"
+				netplanLines << "      addresses:"
+				netplanLines << "        - ${ipAddress}/${cidr}"
+				if (gateway) {
+					netplanLines << "      routes:"
+					netplanLines << "        - to: default"
+					netplanLines << "          via: ${gateway}"
+				}
+				def dnsServers = primaryInterface.dnsServers?.split(',')?.collect { it.trim() }?.findAll { it }
+				if (dnsServers) {
+					netplanLines << "      nameservers:"
+					netplanLines << "        addresses: [${dnsServers.join(', ')}]"
+				}
+				def fileEntryLines = []
+				fileEntryLines << "- path: /etc/netplan/99-morpheus.yaml"
+				fileEntryLines << "  content: |"
+				netplanLines.each { line -> fileEntryLines << "    ${line}" }
+				fileEntryLines << "  permissions: '0600'"
+				fileEntryLines << "  owner: root:root"
+				writeFilesEntries << fileEntryLines.join('\n')
+				runcmdEntries << "- netplan apply"
+				runcmdEntries << "- |"
+				runcmdEntries << "  for i in \$(seq 1 30); do"
+				runcmdEntries << "    ip -4 addr show scope global | grep -q inet && break"
+				runcmdEntries << "    sleep 1"
+				runcmdEntries << "  done"
+				runcmdEntries << "- |"
+				runcmdEntries << "  for i in \$(seq 1 30); do"
+				runcmdEntries << "    getent hosts google.com 2>/dev/null && break"
+				runcmdEntries << "    sleep 1"
+				runcmdEntries << "  done"
+			}
+		} else if (isOel && primaryInterface && primaryInterface.doStatic && !primaryInterface.doDhcp) {
+			// Non-netplan (OEL/RHEL): write a NetworkManager keyfile for static IP.
+			def ipAddress = primaryInterface.ipAddress
+			def netmask = primaryInterface.netmask
+			def gateway = primaryInterface.gateway
+			log.debug("enhanceCloudInitConfig: building NM keyfile static IP for interface '${nicName}' with IP=${ipAddress}/${netmask}, gateway=${gateway}")
+
 			if (ipAddress && netmask) {
 				log.debug("Adding static network configuration to cloud-init: ${nicName}=${ipAddress}")
-				
-				// Build ifcfg-eth0 content (use proper string concatenation to avoid indentation issues)
-				def ifcfgLines = []
-				ifcfgLines << "DEVICE=${nicName}"
-				ifcfgLines << "BOOTPROTO=static"
-				ifcfgLines << "ONBOOT=yes"
-				ifcfgLines << "TYPE=Ethernet"
-				ifcfgLines << "IPADDR=${ipAddress}"
-				ifcfgLines << "NETMASK=${netmask}"
-				
+
+				def cidr = resolveCidr(primaryInterface)
+
+				// Build NetworkManager keyfile content (supported on OEL/RHEL 7, 8, and 9)
+				def nmLines = []
+				nmLines << "[connection]"
+				nmLines << "id=${nicName}"
+				nmLines << "type=ethernet"
+				nmLines << "autoconnect=yes"
+				nmLines << ""
+				nmLines << "[match]"
+				// Glob matches eth0, enp1s0, ens3, etc. — the predictable NIC name used
+				// by the guest OS is not known at provisioning time. The [match] section
+				// (unlike [connection] interface-name) supports shell globs.
+				nmLines << "interface-name=e*;"
+				nmLines << ""
+				nmLines << "[ethernet]"
+				nmLines << ""
+				nmLines << "[ipv4]"
+				nmLines << "method=manual"
+				nmLines << "address1=${ipAddress}/${cidr}"
 				if (gateway) {
-					ifcfgLines << "GATEWAY=${gateway}"
+					nmLines << "gateway=${gateway}"
 				}
-				
-				// Add DNS if provided
-				if (primaryInterface.dnsServers) {
-					def dnsServers = primaryInterface.dnsServers.split(',').collect { it.trim() }
-					dnsServers.eachWithIndex { dns, idx ->
-						ifcfgLines << "DNS${idx + 1}=${dns}"
-					}
+				def dnsServers = primaryInterface.dnsServers?.split(',')?.collect { it.trim() }?.findAll { it }
+				if (dnsServers) {
+					nmLines << "dns=${dnsServers.join(';')};"
 				}
-				
-				def ifcfgContent = ifcfgLines.join('\\n')
-				
-				// Build write_files entry with correct indentation
+				nmLines << ""
+				nmLines << "[ipv6]"
+				nmLines << "method=auto"
+
+				// Build write_files entry
 				def fileEntryLines = []
-				fileEntryLines << "  - path: /etc/sysconfig/network-scripts/ifcfg-${nicName}"
-				fileEntryLines << "    content: |"
+				fileEntryLines << "- path: /etc/NetworkManager/system-connections/${nicName}.nmconnection"
+				fileEntryLines << "  content: |"
+				nmLines.each { line -> fileEntryLines << "    ${line}" }
+				fileEntryLines << "  permissions: '0600'"
+				fileEntryLines << "  owner: root:root"
+				writeFilesEntries << fileEntryLines.join('\n')
 
-				// Add each line of ifcfg content with proper indentation (6 spaces)
-				ifcfgLines.each { line ->
-					fileEntryLines << "      ${line}"
-				}
+				runcmdEntries << "- nmcli connection reload"
+				runcmdEntries << "- nmcli connection up id ${nicName}"
+				runcmdEntries << "- systemctl restart systemd-resolved 2>/dev/null || true"
+				runcmdEntries << "- |"
+				runcmdEntries << "  for i in \$(seq 1 30); do"
+				runcmdEntries << "    grep -q '^nameserver' /run/systemd/resolve/resolv.conf 2>/dev/null && break"
+				runcmdEntries << "    sleep 1"
+				runcmdEntries << "  done"
+			}
+		} else if (isOel) {
+			// OEL/RHEL DHCP: some templates use NetworkManager, others (e.g. minimal OEL 9
+			// cloud images) use systemd-networkd. We write config files for both and use
+			// a runtime runcmd to activate whichever stack is present.
+			//
+			// NetworkManager keyfile (for NM-based templates):
+			// Templates commonly have an NM connection profile tied to the original
+			// interface name (e.g. enp0s2). The provisioned VM may get a different
+			// PCI slot (e.g. enp1s0), so no profile matches and NM leaves the interface
+			// disconnected. We write a DHCP keyfile using the [match] glob so NM brings
+			// up whichever ethernet interface the VM actually has. DNS servers from Morpheus
+			// are added explicitly because some DHCP servers don't send option 6 (DNS).
+			def nmDhcpLines = []
+			nmDhcpLines << "[connection]"
+			nmDhcpLines << "id=morpheus-dhcp"
+			nmDhcpLines << "type=ethernet"
+			nmDhcpLines << "autoconnect=yes"
+			nmDhcpLines << ""
+			nmDhcpLines << "[match]"
+			nmDhcpLines << "interface-name=e*;"
+			nmDhcpLines << ""
+			nmDhcpLines << "[ethernet]"
+			nmDhcpLines << ""
+			nmDhcpLines << "[ipv4]"
+			nmDhcpLines << "method=auto"
+			def dhcpDnsServers = primaryInterface?.dnsServers?.split(',')?.collect { it.trim() }?.findAll { it }
+			if (dhcpDnsServers) {
+				nmDhcpLines << "dns=${dhcpDnsServers.join(';')};"
+				log.info("enhanceCloudInitConfig: OEL DHCP - adding DNS servers to NM keyfile: ${dhcpDnsServers}")
+			}
+			nmDhcpLines << ""
+			nmDhcpLines << "[ipv6]"
+			nmDhcpLines << "method=auto"
 
-				fileEntryLines << "    permissions: '0644'"
-				fileEntryLines << "    owner: root:root"
+			def nmFileEntryLines = []
+			nmFileEntryLines << "- path: /etc/NetworkManager/system-connections/morpheus-dhcp.nmconnection"
+			nmFileEntryLines << "  content: |"
+			nmDhcpLines.each { line -> nmFileEntryLines << "    ${line}" }
+			nmFileEntryLines << "  permissions: '0600'"
+			nmFileEntryLines << "  owner: root:root"
+			writeFilesEntries << nmFileEntryLines.join('\n')
 
-				def fileEntry = fileEntryLines.join('\n')
-				
-				writeFilesContent << fileEntry
-				
-				// Commands to apply network config
-				runcmdContent << "  - nmcli connection reload"
-				runcmdContent << "  - nmcli connection up ${nicName} || true"
-				runcmdContent << "  - systemctl restart NetworkManager"
+			// NM conf.d override: force dhclient as the DHCP backend.
+			// NM's internal DHCP client does not set the BROADCAST flag in DHCP DISCOVER
+			// packets by default. oVirt port security drops unicast DHCP OFFERs, so no lease
+			// is ever obtained. dhclient sets the broadcast flag by default and works correctly.
+			// This conf.d file is picked up by NM on restart in the runcmd below.
+			def nmConfLines = []
+			nmConfLines << "[main]"
+			nmConfLines << "dhcp=dhclient"
+
+			def nmConfFileEntryLines = []
+			nmConfFileEntryLines << "- path: /etc/NetworkManager/conf.d/90-morpheus-dhcp.conf"
+			nmConfFileEntryLines << "  content: |"
+			nmConfLines.each { line -> nmConfFileEntryLines << "    ${line}" }
+			nmConfFileEntryLines << "  permissions: '0644'"
+			nmConfFileEntryLines << "  owner: root:root"
+			writeFilesEntries << nmConfFileEntryLines.join('\n')
+
+			// systemd-networkd .network file (for NM-less templates like minimal OEL 9 images):
+			// RequestBroadcast=yes forces the client to request a broadcast reply,
+			// which oVirt port security forwards correctly.
+			// Name=en* catches enp1s0/ens3 etc.; Name=eth* catches eth0.
+			// Type=ether restricts to physical ethernet only (not loopback or virtual).
+			def networkdDhcpLines = []
+			networkdDhcpLines << "[Match]"
+			networkdDhcpLines << "Name=en*"
+			networkdDhcpLines << "Name=eth*"
+			networkdDhcpLines << "Type=ether"
+			networkdDhcpLines << ""
+			networkdDhcpLines << "[Network]"
+			networkdDhcpLines << "DHCP=ipv4"
+			networkdDhcpLines << ""
+			networkdDhcpLines << "[DHCP]"
+			networkdDhcpLines << "ClientIdentifier=mac"
+			networkdDhcpLines << "RequestBroadcast=yes"
+
+			def networkdFileEntryLines = []
+			networkdFileEntryLines << "- path: /etc/systemd/network/01-morpheus-dhcp.network"
+			networkdFileEntryLines << "  content: |"
+			networkdDhcpLines.each { line -> networkdFileEntryLines << "    ${line}" }
+			networkdFileEntryLines << "  permissions: '0644'"
+			networkdFileEntryLines << "  owner: root:root"
+			writeFilesEntries << networkdFileEntryLines.join('\n')
+
+			// Runtime detection: use whichever networking stack is present.
+			// For NM: restart NM so it picks up the dhclient conf.d override (broadcast fix),
+			// remove the networkd file to avoid stack conflict, then bring up morpheus-dhcp.
+			// Poll for IPv4 address (up to 30s) since nmcli connection up may return before
+			// the DHCP lease is fully written to the interface.
+			// For systemd-networkd: remove the NM files and restart networkd.
+			runcmdEntries << "- |"
+			runcmdEntries << "  if command -v nmcli >/dev/null 2>&1; then"
+			runcmdEntries << "    rm -f /etc/systemd/network/01-morpheus-dhcp.network"
+			runcmdEntries << "    nmcli connection up morpheus-dhcp 2>/dev/null || true"
+			runcmdEntries << "    if ! ip -4 addr show scope global | grep -q inet; then"
+			runcmdEntries << "      command -v dhclient >/dev/null 2>&1 || dnf install -y dhcp-client --setopt=install_weak_deps=False --nodocs -q 2>/dev/null || true"
+			runcmdEntries << "      if command -v dhclient >/dev/null 2>&1; then"
+			runcmdEntries << "        printf '[main]\\ndhcp=dhclient\\n' > /etc/NetworkManager/conf.d/90-morpheus-dhcp.conf"
+			runcmdEntries << "      else"
+			runcmdEntries << "        rm -f /etc/NetworkManager/conf.d/90-morpheus-dhcp.conf"
+			runcmdEntries << "      fi"
+			runcmdEntries << "      systemctl restart NetworkManager"
+			runcmdEntries << "      nmcli connection up morpheus-dhcp 2>/dev/null || true"
+			runcmdEntries << "    fi"
+			runcmdEntries << "    for i in \$(seq 1 30); do"
+			runcmdEntries << "      ip -4 addr show scope global | grep -q inet && break"
+			runcmdEntries << "      sleep 1"
+			runcmdEntries << "    done"
+			runcmdEntries << "  elif systemctl is-active systemd-networkd >/dev/null 2>&1; then"
+			runcmdEntries << "    rm -f /etc/NetworkManager/system-connections/morpheus-dhcp.nmconnection"
+			runcmdEntries << "    rm -f /etc/NetworkManager/conf.d/90-morpheus-dhcp.conf"
+			runcmdEntries << "    systemctl restart systemd-networkd"
+			runcmdEntries << "    networkctl wait-online --timeout=30 2>/dev/null || true"
+			runcmdEntries << "  fi"
+			runcmdEntries << "  systemctl restart systemd-resolved 2>/dev/null || true"
+			runcmdEntries << "  for i in \$(seq 1 30); do"
+			runcmdEntries << "    grep -q '^nameserver' /run/systemd/resolve/resolv.conf 2>/dev/null && break"
+			runcmdEntries << "    sleep 1"
+			runcmdEntries << "  done"
+			log.info("enhanceCloudInitConfig: OEL DHCP - writing NM keyfile, dhclient conf.d, and systemd-networkd .network file for runtime detection")
+		}
+
+		if (!writeFilesEntries && !runcmdEntries) {
+			return cloudConfig
+		}
+
+		// Merge into existing write_files / runcmd sections, or append new sections.
+		// This ensures we don't silently skip config when those sections already exist.
+		if (writeFilesEntries) {
+			def newEntries = "\n" + writeFilesEntries.join('\n')
+			if (cloudConfig =~ /(?m)^write_files:\s*$/) {
+				cloudConfig = cloudConfig.replaceFirst(/(?m)^write_files:\s*$/, java.util.regex.Matcher.quoteReplacement('write_files:' + newEntries))
+			} else {
+				cloudConfig += "\nwrite_files:" + newEntries
 			}
 		}
-		
-		// ========================================================================
-		// BUILD FINAL CLOUD-CONFIG
-		// ========================================================================
-		if (writeFilesContent || runcmdContent) {
-			if (!hasWriteFiles && writeFilesContent) {
-				additionalConfig += "\nwrite_files:"
-				writeFilesContent.each { additionalConfig += "\n${it}" }
+
+		if (runcmdEntries) {
+			def newCmds = "\n" + runcmdEntries.join('\n')
+			if (cloudConfig =~ /(?m)^runcmd:\s*$/) {
+				cloudConfig = cloudConfig.replaceFirst(/(?m)^runcmd:\s*$/, java.util.regex.Matcher.quoteReplacement('runcmd:' + newCmds))
+			} else {
+				cloudConfig += "\n\nruncmd:" + newCmds
 			}
-			
-			if (!hasRuncmd && runcmdContent) {
-				additionalConfig += "\n\nruncmd:"
-				runcmdContent.each { additionalConfig += "\n${it}" }
-			}
-			
-			log.debug("Enhanced cloud-init with ${writeFilesContent.size()} files and ${runcmdContent.size()} commands")
 		}
-		
-		return cloudConfig + additionalConfig
+
+		log.debug("Enhanced cloud-init with ${writeFilesEntries.size()} write_files entries and ${runcmdEntries.size()} runcmd entries")
+		log.debug("Enhanced cloud-init result length: ${cloudConfig?.length()}")
+		return cloudConfig
 	}
 
 	protected void runVirtualMachine(Cloud cloud, Object workloadRequest, Map runConfig, ProvisionResponse provisionResponse, Map opts) {
@@ -1938,6 +2221,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 
 			//set install agent
 			runConfig.installAgent = runConfig.noAgent && server.cloud.agentMode != 'cloudInit'
+			log.debug("insertVm: noAgent=${runConfig.noAgent}, cloud.agentMode=${server.cloud.agentMode}, installAgent=${runConfig.installAgent}")
 
 			//data volumes
 			if (runConfig.dataDisks)
@@ -1956,35 +2240,43 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 				}
 			}
 			else {
+				log.debug("insertVm: creating VM from template imageRef=${runConfig.imageRef}, name=${runConfig.name}, cluster=${runConfig.clusterRef}")
 				createResults = OlvmComputeUtility.createServer(runConfig)
 			}
 			log.debug("create server: ${createResults}")
 			if (createResults.success == true && createResults.data.vmId) {
 				server.externalId = createResults.data.vmId
 				provisionResponse.externalId = server.externalId
+				log.debug("insertVm: VM created with externalId=${server.externalId}, waiting for VM to exist in OLVM")
 				server = saveAndGet(server)
 				runConfig.server = server
 
 				OlvmComputeUtility.waitForServerExists([connection:runConfig.connection, server:server])
+				log.debug("insertVm: VM ${server.externalId} is now ready (status=down)")
 
 				// once server exists set entity ids onto our model
 				def vmDetails = OlvmComputeUtility.getServerDetail([connection: runConfig.connection, server: server])
+				log.debug("insertVm: vmDetails success=${vmDetails.success}, status=${vmDetails.data?.status}, disks=${vmDetails.data?.disks?.size()}, nics=${vmDetails.data?.nics?.size()}")
 
 				// change size of the of the root volume and save off id
 				def rootVolume = server.volumes.find { it -> return it.rootVolume }
 				rootVolume.externalId = vmDetails.data.disks.find { d -> return d.bootable == true }.id
+				log.debug("insertVm: root volume externalId=${rootVolume.externalId}, maxStorage=${rootVolume.maxStorage}")
 				rootVolume = saveAndGetVolume(rootVolume)
 				def response = OlvmComputeUtility.updateDiskSize([
 					connection: runConfig.connection, disk: [id: rootVolume.externalId, size: rootVolume.maxStorage]
 				])
+				log.debug("insertVm: updateDiskSize success=${response.success}")
 
 				if (!response.success) {
-					throw new RuntimeException("Unable to update disk size: ${OlvmComputeUtility.extractErrorMessage(response.data)}")
+					taskResults.message = "Unable to update disk size: ${OlvmComputeUtility.extractErrorMessage(response.data)}"
+					return taskResults
 				}
 
 			// Handle data disks — some may already exist on the VM (cloned from template via disk_attachments),
 			// others are truly extra disks that need to be created fresh via the API
 			if (runConfig.dataDisks?.size() > 0) {
+				log.debug("insertVm: handling ${runConfig.dataDisks.size()} data disk(s), ${vmDetails.data.disks.findAll{!it.bootable}.size()} cloned from template")
 				def clonedTemplateDisks = vmDetails.data.disks.findAll { d -> !d.bootable }
 				def extraDataDisks = []
 
@@ -1992,18 +2284,22 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 					if (i < clonedTemplateDisks.size()) {
 						// This data disk was already cloned from the template — just assign its external id
 						vol.externalId = clonedTemplateDisks[i].id
+						log.debug("insertVm: data disk[${i}] '${vol.name}' cloned from template, externalId=${vol.externalId}")
 						saveAndGetVolume(vol)
 					} else {
 						// This is an extra disk beyond the template — needs to be created via API
+						log.debug("insertVm: data disk[${i}] '${vol.name}' is extra, will be created via API")
 						extraDataDisks << vol
 					}
 				}
 
 				if (extraDataDisks) {
+					log.debug("insertVm: adding ${extraDataDisks.size()} extra data disk(s) via API")
 					def dataDiskResp = OlvmComputeUtility.addDisksToVm([
 						connection: runConfig.connection, vmId: server.externalId,
 						disks     : extraDataDisks
 					])
+					log.debug("insertVm: addDisksToVm success=${dataDiskResp.success}")
 
 					for (StorageVolume vol in extraDataDisks) {
 						def cloudDisk = dataDiskResp.data.disks.find { it -> return it.name == vol.name }
@@ -2015,17 +2311,23 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 
 
 				if (!vmDetails.data.nics) {
+					log.debug("insertVm: VM has no NICs from template, adding primary NIC for network=${runConfig.networkConfig?.primaryInterface?.network?.id}")
 					def addPrimaryInterface = OlvmComputeUtility.addNicsToVm(
 						[connection: runConfig.connection, nics: [runConfig.networkConfig.primaryInterface], vmId: server.externalId]
 					)
+					log.debug("insertVm: addPrimaryInterface success=${addPrimaryInterface.success}")
 					//saveAndGetNic(addPrimaryInterface.data?.first())
+				} else {
+					log.debug("insertVm: VM already has ${vmDetails.data.nics.size()} NIC(s) from template")
 				}
 
 				// add extra interfaces to vm
 				if (runConfig.networkConfig.extraInterfaces) {
+					log.debug("insertVm: adding ${runConfig.networkConfig.extraInterfaces.size()} extra interface(s)")
 					def addResp = OlvmComputeUtility.addNicsToVm([
 						connection: runConfig.connection, nics: runConfig.networkConfig.extraInterfaces, vmId: server.externalId
 					])
+					log.debug("insertVm: addExtraInterfaces success=${addResp.success}")
 
 					for (nic in addResp.data) {
 						saveAndGetNic(nic)
@@ -2050,39 +2352,66 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 				// OlvmComputeUtility.startVmWithCloudInit([connection: runConfig.connection, server: server, cloudInitScript: cloudInitScript])
 				// Enhance cloud-init with hostname and network configuration
 				log.debug("insertVm - Enhancing cloud-init with hostname and network config")
+				def hasNetworkBeforeEnhance = runConfig.cloudConfig?.contains('network:')
 				def enhancedCloudConfig = enhanceCloudInitConfig(
 					runConfig.cloudConfig,
 					runConfig.hostname,
 					runConfig.domainName,
-					runConfig.networkConfig
+					runConfig.networkConfig,
+					runConfig.serverOs
 				)
 
 				log.debug("insertVm - Starting VM with cloud-init only (no OLVM initialization)")
+				log.debug("insertVm - cloud-init script length: ${enhancedCloudConfig?.length() ?: 0} chars")
+				log.info("insertVm - cloud-init config length: ${enhancedCloudConfig?.length()}")
+				log.info("insertVm - network section: present before enhance=${hasNetworkBeforeEnhance}, present after=${enhancedCloudConfig?.contains('network:')}")
+				log.info("insertVm - cloudConfigNetwork (from core): ${runConfig.cloudConfigNetwork ?: '(empty)'}")
+				log.info("insertVm - full cloud-config:\n${enhancedCloudConfig?.take(3000) ?: '(empty)'}")
 				// Start VM with cloud-init only - no OLVM initialization parameters
-				OlvmComputeUtility.startVmWithCloudInit([
+				def startResult = OlvmComputeUtility.startVmWithCloudInit([
 					connection: runConfig.connection,
 					server: server,
-					cloudInitScript: enhancedCloudConfig
+					cloudInitScript: enhancedCloudConfig,
+					cloudConfigNetwork: runConfig.cloudConfigNetwork ?: null
 				])
+				log.debug("insertVm: startVmWithCloudInit success=${startResult?.success}, msg=${startResult?.msg}")
+				if (!startResult?.success) {
+					def startError = startResult?.error ?: startResult?.msg ?: 'unknown error'
+					log.error("insertVm: VM failed to start: ${startError}")
+					taskResults.message = "Failed to start VM: ${startError}"
+					provisionResponse.setError(taskResults.message)
+					return taskResults
+				}
 				// wait for ready
+				log.debug("insertVm: waiting for server ready (status=up)")
 				def statusResults = OlvmComputeUtility.checkServerReady(runConfig)
+				log.info("insertVm: checkServerReady success=${statusResults.success}, status=${statusResults.data?.status}, ipV4=${statusResults.data?.ipV4}")
 				if (statusResults.success == true) {
 					//good to go
 					def serverDetails = statusResults.data
 					log.debug("server details: {}", serverDetails)
 					//update network info
-					def privateIp = serverDetails.ipV4?.first()
+					// Prefer IP reported by OLVM guest agent; fall back to interface IP (static) or internalIp
+					def privateIp = serverDetails.ipV4?.find { it } ?:
+						runConfig.networkConfig?.primaryInterface?.ipAddress ?:
+						server.interfaces?.find { it.primaryInterface }?.ipAddress ?:
+						server.internalIp
 					def publicIp = privateIp
+					log.info("insertVm: resolved IP - privateIp=${privateIp} (olvmGuestAgent=${serverDetails.ipV4}, staticInterfaceIp=${runConfig.networkConfig?.primaryInterface?.ipAddress})")
 
 					taskResults.sshHost = publicIp
 					taskResults.server = serverDetails
 					taskResults.success = true
 					provisionResponse.success = true
 				} else {
+					log.warn("insertVm: checkServerReady timed out - VM did not reach 'up' status within the wait window")
 					taskResults.message = 'Failed to get server status'
+					provisionResponse.setError(taskResults.message)
 				}
 			} else {
+				log.warn("insertVm: createServer failed - success=${createResults.success}, vmId=${createResults.data?.vmId}, msg=${createResults.msg}")
 				taskResults.message = createResults.msg
+				provisionResponse.setError(taskResults.message ?: 'Failed to create VM')
 			}
 		}
 		catch (Throwable t) {

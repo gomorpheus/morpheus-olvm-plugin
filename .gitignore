@@ -2,4 +2,5 @@
 .gradle
 build
 lib/
+src/main/resources/olvm-plugin.properties
 

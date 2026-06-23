@@ -959,7 +959,8 @@ class OlvmComputeUtility {
                 }
             }
             else {
-                rtn = ServiceResponse.error("Failed to start vm: ${extractErrorMessage(response.data)}")
+                def errMsg = extractErrorMessage(response.data) ?: response.msg ?: 'Unknown oVirt error'
+                rtn = ServiceResponse.error("Failed to start vm: ${errMsg}")
             }
         }
         catch (Throwable t) {
@@ -1118,20 +1119,48 @@ class OlvmComputeUtility {
         try {
             def pending = true
             def attempts = 0
+            def statusUpAttempts = 0  // extra polls after status=up to give guest agent time to report IPs
+            def maxStatusUpAttempts = 12  // 12 x 10s = 2 minutes; cloud-init DHCP setup can take this long
             while(pending) {
                 sleep(1000l * 10l)
                 def resp = getServerDetail(opts)
                 def serverDetail = resp.data
-                if(resp.success == true && serverDetail.status == 'up') {
-                    if (serverDetail.ipV4.size() > 0) {
+                def status = serverDetail?.status
+                def ipV4 = serverDetail?.ipV4
+                log.debug("checkServerReady: attempt ${attempts + 1}/15 - status=${status}, ipV4=${ipV4}")
+                if(resp.success == true && status == 'up') {
+                    if (ipV4?.size() > 0) {
+                        log.debug("checkServerReady: VM is up with IP=${ipV4.first()}")
                         rtn.success = true
                         rtn.data = serverDetail
                         pending = false
+                    } else if (opts.noAgent == true) {
+                        // Guest agent is not installed by configuration — no point waiting for IPs
+                        log.debug("checkServerReady: VM is up, skipping IP wait (noAgent=true)")
+                        rtn.success = true
+                        rtn.data = serverDetail
+                        pending = false
+                    } else {
+                        statusUpAttempts++
+                        if (statusUpAttempts >= maxStatusUpAttempts) {
+                            // VM is up but guest agent has not reported IPs after maxStatusUpAttempts polls -
+                            // template likely has no guest agent installed; proceed without IP
+                            log.debug("checkServerReady: VM is up but no IPv4 after ${statusUpAttempts} extra polls - proceeding without IP (no guest agent?)")
+                            rtn.success = true
+                            rtn.data = serverDetail
+                            pending = false
+                        } else {
+                            log.debug("checkServerReady: VM is up but no IPv4 yet, waiting for guest agent (${statusUpAttempts}/${maxStatusUpAttempts} extra polls)")
+                        }
                     }
+                } else if (!resp.success) {
+                    log.debug("checkServerReady: getServerDetail failed on attempt ${attempts + 1}: ${extractErrorMessage(resp.data) ?: resp.msg}")
                 }
-                attempts ++
-                if(attempts > 15)
+                attempts++
+                if(pending && attempts >= 15) {
+                    log.warn("checkServerReady: timed out after ${attempts} attempts - last status=${status}, ipV4=${ipV4}")
                     pending = false
+                }
             }
         } catch(e) {
             log.error("An Exception Has Occurred: ${e.message}",e)
@@ -1189,7 +1218,10 @@ class OlvmComputeUtility {
                     'GET'
                 )
                 def devices = response.data['reported_device']
-                for (device in devices) {
+                // Normalize: null → [], single Map → [map], list → list
+                def deviceList = devices == null ? [] : (devices instanceof List ? devices : [devices])
+                log.debug("getServerDetail: VM ${externalId} has ${deviceList.size()} reported device(s)")
+                for (device in deviceList) {
                     for(ip in device.ips?.ip) {
                         if (ip.version == 'v4') {
                             vmMap.ipV4 << ip.address
@@ -1207,7 +1239,9 @@ class OlvmComputeUtility {
                     reqOptions,
                     'GET'
                 )
-                for (diskAttachment in response.data['disk_attachment']) {
+                def diskAttachments = response.data['disk_attachment']
+                def diskAttachmentList = diskAttachments == null ? [] : (diskAttachments instanceof List ? diskAttachments : [diskAttachments])
+                for (diskAttachment in diskAttachmentList) {
                     def disk = client.callJsonApi(
                         connection.apiUrl,
                         diskAttachment.disk.href,
@@ -2050,11 +2084,16 @@ class OlvmComputeUtility {
     }
 
     static String extractErrorMessage(resp) {
-        if (resp?.fault)
-            return "${resp?.fault.message} - ${resp?.faul?.detail}".toString()
-        else
-            return "${resp?.message} - ${resp?.detail}".toString()
-
+        if (resp?.fault) {
+            def reason = resp.fault?.reason ?: ''
+            def detail = resp.fault?.detail ?: ''
+            if (reason && detail) return "${reason} - ${detail}"
+            return reason ?: detail ?: null
+        }
+        def msg = resp?.message ?: ''
+        def detail = resp?.detail ?: ''
+        if (msg && detail) return "${msg} - ${detail}"
+        return msg ?: detail ?: null
     }
 
     private static String extractRootURL(String urlString) {

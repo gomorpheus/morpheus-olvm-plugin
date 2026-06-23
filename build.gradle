@@ -121,3 +121,16 @@ test {
 	}
 }
 tasks.assemble.dependsOn tasks.shadowJar
+
+task generateVersionProperties {
+	def propsFile = file('src/main/resources/olvm-plugin.properties')
+	// Always re-run so the hash stays current with HEAD
+	outputs.upToDateWhen { false }
+	outputs.file propsFile
+	doLast {
+		def gitHash = ['git', 'rev-parse', '--short=5', 'HEAD'].execute().text.trim() ?: 'unknown'
+		propsFile.parentFile.mkdirs()
+		propsFile.text = "version=${project.version}\ngitHash=${gitHash}\n"
+	}
+}
+processResources.dependsOn generateVersionProperties

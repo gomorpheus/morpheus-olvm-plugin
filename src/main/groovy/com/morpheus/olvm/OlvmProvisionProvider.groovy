@@ -201,6 +201,80 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			inputType: OptionType.InputType.CHECKBOX,
 			helpBlock: 'Skipping Agent installation will result in a lack of logging and guest operating system statistics. Automation scripts may also be adversely affected.'
 		])
+		options << new OptionType([
+			name: 'cloneType',
+			code: 'olvm.plugin.provision.cloneType',
+			category: 'provisionType.olvm',
+			fieldName: 'cloneType',
+			fieldContext: 'config',
+			fieldLabel: 'Clone Type',
+			fieldGroup: 'Advanced Options',
+			inputType: OptionType.InputType.SELECT,
+			displayOrder: 120,
+			defaultValue: 'linked',
+			optionSource: 'olvmCloneTypes',
+			displayValueOnDetails: true,
+			helpBlock: 'Linked clone shares template storage and is faster to create, but the template cannot be deleted while linked VMs exist. Full clone is fully independent but uses more storage and takes longer to provision.'
+		])
+		options << new OptionType([
+			name: 'diskProvisioning',
+			code: 'olvm.plugin.provision.diskProvisioning',
+			category: 'provisionType.olvm',
+			fieldName: 'diskProvisioning',
+			fieldContext: 'config',
+			fieldLabel: 'Disk Provisioning',
+			fieldGroup: 'Advanced Options',
+			inputType: OptionType.InputType.SELECT,
+			displayOrder: 121,
+			defaultValue: 'thin',
+			optionSource: 'olvmDiskProvisioningTypes',
+			displayValueOnDetails: true,
+			helpBlock: 'Thin: only used blocks are allocated on disk; supports snapshots and stateless mode. Preallocated: all blocks are allocated at creation for more predictable storage performance.'
+		])
+		options << new OptionType([
+			name: 'stateless',
+			code: 'olvm.plugin.provision.stateless',
+			category: 'provisionType.olvm',
+			fieldName: 'stateless',
+			fieldContext: 'config',
+			fieldLabel: 'Stateless VM',
+			fieldGroup: 'Advanced Options',
+			inputType: OptionType.InputType.CHECKBOX,
+			displayOrder: 122,
+			displayValueOnDetails: true,
+			helpBlock: 'When enabled, VM disk state is automatically rolled back to its pre-start snapshot on every shutdown. Requires thin (COW) disk provisioning.'
+		])
+		options << new OptionType([
+			name: 'host',
+			code: 'olvm.plugin.provision.hostId',
+			category: 'provisionType.olvm',
+			fieldName: 'hostId',
+			fieldContext: 'config',
+			fieldLabel: 'Host',
+			fieldGroup: 'Advanced Options',
+			inputType: OptionType.InputType.SELECT,
+			displayOrder: 130,
+			required: false,
+			optionSource: 'olvmHosts',
+			dependsOn: 'olvm.plugin.provision.cluster',
+			displayValueOnDetails: true,
+			helpBlock: 'Optionally target a specific hypervisor host within the selected cluster. Leave blank to let OLVM choose.'
+		])
+		options << new OptionType([
+			name: 'hostAffinity',
+			code: 'olvm.plugin.provision.hostAffinity',
+			category: 'provisionType.olvm',
+			fieldName: 'hostAffinity',
+			fieldContext: 'config',
+			fieldLabel: 'Host Affinity',
+			fieldGroup: 'Advanced Options',
+			inputType: OptionType.InputType.SELECT,
+			displayOrder: 131,
+			defaultValue: 'migratable',
+			optionSource: 'olvmHostAffinityTypes',
+			displayValueOnDetails: true,
+			helpBlock: 'Controls migration behaviour when a host is selected. Migratable: prefer the host but allow live migration. User Migratable: only administrator-initiated migration allowed. Pinned: VM is locked to the selected host with no migration possible.'
+		])
 		return options
 	}
 
@@ -1538,6 +1612,22 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 
 		def runConfig = [:] + opts + buildRunConfig(server, virtualImage, workloadRequest.networkConfiguration, connection, workloadConfig, opts)
 
+		def stateless = workloadConfig.stateless?.toString() == 'true' || workloadConfig.stateless == true
+		def diskProvisioning = workloadConfig.diskProvisioning ?: 'thin'
+		def cloneType = workloadConfig.cloneType ?: 'linked'
+
+		if (stateless && diskProvisioning == 'preallocated') {
+			log.warn("buildWorkloadRunConfig: stateless=true requires thin (COW) disk provisioning — overriding diskProvisioning to 'thin'")
+			diskProvisioning = 'thin'
+		}
+
+		def hostRef = null
+		def hostAffinity = workloadConfig.hostAffinity ?: 'migratable'
+		if (workloadConfig.hostId) {
+			// hostId is the OLVM externalId (UUID) returned directly by olvmHosts option source
+			hostRef = workloadConfig.hostId
+		}
+
 		runConfig += [
 			name              : server.name,
 			instanceId		  : workload.instance.id,
@@ -1555,7 +1645,12 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			userConfig        : workloadRequest.usersConfiguration,
 			cloudConfig	      : workloadRequest.cloudConfigUser,
 			cloudConfigNetwork: workloadRequest.cloudConfigNetwork,
-			networkConfig	  : workloadRequest.networkConfiguration
+			networkConfig	  : workloadRequest.networkConfiguration,
+			stateless         : stateless,
+			diskProvisioning  : diskProvisioning,
+			cloneType         : cloneType,
+			hostRef           : hostRef,
+			hostAffinity      : hostAffinity,
 		]
 
 		log.debug("buildWorkloadRunConfig - Cloud-init config length: ${runConfig.cloudConfig?.length()}")

@@ -256,6 +256,7 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 			displayOrder: 130,
 			required: false,
 			optionSource: 'olvmHosts',
+			dependsOn: 'olvm.plugin.provision.cluster',
 			displayValueOnDetails: true,
 			helpBlock: 'Optionally target a specific hypervisor host within the selected cluster. Leave blank to let OLVM choose.'
 		])

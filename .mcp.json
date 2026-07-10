@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "hero": {
+      "command": "/opt/homebrew/bin/hero",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}

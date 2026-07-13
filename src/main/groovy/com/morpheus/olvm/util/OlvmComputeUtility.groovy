@@ -680,7 +680,7 @@ class OlvmComputeUtility {
             }
 
             // Create a SSL context with the all-trusting manager
-            SSLContext sslContext = SSLContext.getInstance("SSL")
+            SSLContext sslContext = SSLContext.getInstance("TLS")
             sslContext.init(null, trustAllCertificates, new java.security.SecureRandom())
 
             // Open a connection to the URL
@@ -694,7 +694,9 @@ class OlvmComputeUtility {
                 ((HttpsURLConnection) connection).setSSLSocketFactory(sslContext.getSocketFactory())
             }
             else {
-                log.warn("pushDataToTarget target URL is not HTTPS (${url}); skipping SSL trust override")
+                // Fail fast rather than sending the Authorization token and image bytes
+                // over plaintext HTTP.
+                throw new IllegalStateException("pushDataToTarget target URL is not HTTPS (${url}); refusing to upload credentials/data over plain HTTP")
             }
 
             // Set connection properties

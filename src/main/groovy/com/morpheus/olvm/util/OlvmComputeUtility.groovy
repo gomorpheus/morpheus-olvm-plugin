@@ -51,7 +51,7 @@ class OlvmComputeUtility {
             rtn.error = "Unable to get datacenters: ${t.message}"
         }
         finally {
-            client.shutdownClient()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -95,7 +95,7 @@ class OlvmComputeUtility {
             rtn.error = "Unable to get clusters: ${t.message}"
         }
         finally {
-            client.shutdownClient()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -136,8 +136,7 @@ class OlvmComputeUtility {
             rtn.error = "Unable to get templates: ${t.message}"
         }
         finally {
-            if (client)
-                client.shutdownClient()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -283,7 +282,7 @@ class OlvmComputeUtility {
             rtn.error = "Unable to get networks: ${t.message}"
         }
         finally {
-            client.shutdownClient()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -327,7 +326,7 @@ class OlvmComputeUtility {
             rtn.error = "Unable to get storage domains: ${t.message}"
         }
         finally {
-            client.shutdownClient()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -985,9 +984,7 @@ class OlvmComputeUtility {
             rtn = ServiceResponse.error("Failed to start vm: ${t.message}")
         }
         finally {
-            if (client) {
-                client.shutdownClient()
-            }
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -1300,8 +1297,7 @@ class OlvmComputeUtility {
             log.error("getServerDetail error: ${t}", t)
         }
         finally {
-            if (client)
-                client.shutdownClient()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -1351,7 +1347,7 @@ class OlvmComputeUtility {
             rtn.error = "Unable to resize disk: ${t.message}"
         }
         finally {
-            client.shutdownClient()
+            client?.shutdownClient()
         }
         return rtn
     }
@@ -1926,7 +1922,7 @@ class OlvmComputeUtility {
             }
         }
         finally {
-            client.shutdownClient()
+            client?.shutdownClient()
         }
         return rtn
     }

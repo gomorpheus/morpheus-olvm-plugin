@@ -683,11 +683,19 @@ class OlvmComputeUtility {
             SSLContext sslContext = SSLContext.getInstance("SSL")
             sslContext.init(null, trustAllCertificates, new java.security.SecureRandom())
 
-            // Install the SSL context into the HTTPS URL connection
-            HttpsURLConnection.setDefaultSSLSocketFactory(sslContext.getSocketFactory())
-
             // Open a connection to the URL
             connection = (HttpURLConnection) url.openConnection()
+
+            // Scope the all-trusting SSL context to THIS connection only — never mutate
+            // the JVM-wide default, since Morpheus runs plugins in a shared process and
+            // a global override would silently disable TLS verification for every other
+            // HTTPS connection in that process.
+            if (connection instanceof HttpsURLConnection) {
+                ((HttpsURLConnection) connection).setSSLSocketFactory(sslContext.getSocketFactory())
+            }
+            else {
+                log.warn("pushDataToTarget target URL is not HTTPS (${url}); skipping SSL trust override")
+            }
 
             // Set connection properties
             connection.setRequestMethod("PUT")

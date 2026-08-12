@@ -111,7 +111,7 @@ class NetworkSync {
                 description:cloudItem.description,
                 active:cloud.defaultNetworkSyncActive ? (cloudItem.provisionable) : false,
                 //active:network.statusPresent() ? network.status() == NetworkStatus.OPERATIONAL : true,
-                cidr: '0.0.0.0/1',
+                cidr: networkIpAssignmentToCidr(cloudItem.ipAssignment) ?: '0.0.0.0/1',
                 dhcpServer: cloudItem.ipAssignment?.assignment_method == 'dhcp',
                 allowStaticOverride:true,
                 cloud:cloud
@@ -131,6 +131,8 @@ class NetworkSync {
             def existingItem = updateItem.existingItem
             def save = false
             def description = masterItem.description
+            def cidr = networkIpAssignmentToCidr(masterItem.ipAssignment)
+            def dhcpServer = masterItem.ipAssignment?.assignment_method == 'dhcp'
 
             if (existingItem.name != masterItem.name) {
                 existingItem.name = masterItem.name
@@ -145,11 +147,31 @@ class NetworkSync {
                 existingItem.description = description
                 save = true
             }
+            // only overwrite the placeholder cidr once we learn the real one from the host network attachment;
+            // never clobber a real cidr the network already has (e.g. one previously discovered or set by a user)
+            if (cidr && cidr != existingItem.cidr && (!existingItem.cidr || existingItem.cidr == '0.0.0.0/1')) {
+                existingItem.cidr = cidr
+                save = true
+            }
+            if (existingItem.dhcpServer != dhcpServer) {
+                existingItem.dhcpServer = dhcpServer
+                save = true
+            }
             if (save)
                 updates << existingItem
         }
         if (updates)
             morpheusContext.async.network.save(updates).blockingGet()
+    }
+
+    // computes a CIDR string from an oVirt ip_address_assignment (host network_attachment), if available
+    protected String networkIpAssignmentToCidr(ipAssignment) {
+        def address = ipAssignment?.ip?.address
+        def netmask = ipAssignment?.ip?.netmask
+        if (!address || !netmask) {
+            return null
+        }
+        return NetworkUtility.networkToCidr(address, netmask)
     }
 
 	def extractNetworkIpAddressAssignments(hosts) {

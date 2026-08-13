@@ -1118,7 +1118,8 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 						name: newVolumeProps.name,
 						displayOrder: newCounter,
 						status: 'provisioned',
-						rootVolume:false
+						rootVolume:false,
+						removable:true
 					)
 					log.info("Saving Volume")
 					morpheus.async.storageVolume.create([newVolume], server).blockingGet()

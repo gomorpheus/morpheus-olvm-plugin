@@ -5,10 +5,5 @@ lib/
 src/main/resources/olvm-plugin.properties
 
 # heroengine.ai
-.hero/index.db
-.hero/graph.db
-.hero/events.log
-.hero/hero.local.json
-.hero/next/*.local.md
-.hero/sessions
+.hero/
 

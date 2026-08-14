@@ -132,7 +132,7 @@ class NetworkSync {
             def save = false
             def description = masterItem.description
             def cidr = networkIpAssignmentToCidr(masterItem.ipAssignment)
-            def dhcpServer = masterItem.ipAssignment?.assignment_method == 'dhcp'
+            def dhcpServer = masterItem.ipAssignment ? (masterItem.ipAssignment?.assignment_method == 'dhcp') : null
 
             if (existingItem.name != masterItem.name) {
                 existingItem.name = masterItem.name
@@ -153,7 +153,10 @@ class NetworkSync {
                 existingItem.cidr = cidr
                 save = true
             }
-            if (existingItem.dhcpServer != dhcpServer) {
+            // only trust dhcpServer when we actually found host network attachment data;
+            // absence of attachment data (the common case for VM-only networks) is not
+            // evidence of "not DHCP" and must never clobber an already-known true value
+            if (dhcpServer != null && existingItem.dhcpServer != dhcpServer) {
                 existingItem.dhcpServer = dhcpServer
                 save = true
             }

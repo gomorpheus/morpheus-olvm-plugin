@@ -122,6 +122,35 @@ class NetworkSyncSpec extends Specification {
 		existingItem.dhcpServer == true
 	}
 
+	def "updateMatchedNetworks does not clobber a known dhcpServer=true when host attachment reports assignment_method 'none'"() {
+		// MORPH-15890 (live repro): every OLVM host reports assignment_method 'none' for VM-only
+		// bridged networks like VLAN2063, because the host itself has no IP on that interface.
+		// This is real, present ipAssignment data - not absence of data - but it says nothing
+		// about whether guest VMs on the network are addressed via DHCP, and must not clobber
+		// an already-known true value.
+		given:
+		def existingItem = new NetworkModel(cidr: '10.32.148.0/22', dhcpServer: true)
+		def masterItem = [
+			name: 'VLAN2063',
+			description: 'VLAN2063',
+			ipAssignment: [assignment_method: 'none', ip: [version: 'v4']]
+		]
+		def updateItem = new SyncList.UpdateItem<NetworkModel, Map>(existingItem, masterItem, false)
+		def morpheusContext = Mock(MorpheusContext)
+		def asyncContext = Mock(MorpheusAsyncServices)
+		def networkContext = Mock(MorpheusNetworkService)
+		morpheusContext.async >> asyncContext
+		asyncContext.network >> networkContext
+		networkContext.save(_) >> Single.just(true)
+		networkSync.@morpheusContext = morpheusContext
+
+		when:
+		networkSync.updateMatchedNetworks([updateItem])
+
+		then:
+		existingItem.dhcpServer == true
+	}
+
 	def "updateMatchedNetworks updates dhcpServer when host attachment data is found"() {
 		given:
 		def existingItem = new NetworkModel(cidr: '10.32.148.0/22', dhcpServer: false)

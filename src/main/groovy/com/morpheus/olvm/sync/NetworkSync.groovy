@@ -132,7 +132,7 @@ class NetworkSync {
             def save = false
             def description = masterItem.description
             def cidr = networkIpAssignmentToCidr(masterItem.ipAssignment)
-            def dhcpServer = masterItem.ipAssignment ? (masterItem.ipAssignment?.assignment_method == 'dhcp') : null
+            def dhcpServer = definitiveDhcpServer(masterItem.ipAssignment)
 
             if (existingItem.name != masterItem.name) {
                 existingItem.name = masterItem.name
@@ -153,9 +153,11 @@ class NetworkSync {
                 existingItem.cidr = cidr
                 save = true
             }
-            // only trust dhcpServer when we actually found host network attachment data;
-            // absence of attachment data (the common case for VM-only networks) is not
-            // evidence of "not DHCP" and must never clobber an already-known true value
+            // only trust dhcpServer when the host network attachment reports a definitive
+            // assignment_method ('dhcp' or 'static'); absent attachment data or 'none' (the
+            // normal, expected value for VM-only bridged networks, where the host itself has
+            // no IP on the interface) says nothing about how guest VMs are addressed and must
+            // never clobber an already-known value
             if (dhcpServer != null && existingItem.dhcpServer != dhcpServer) {
                 existingItem.dhcpServer = dhcpServer
                 save = true
@@ -165,6 +167,17 @@ class NetworkSync {
         }
         if (updates)
             morpheusContext.async.network.save(updates).blockingGet()
+    }
+
+    // returns whether the host network attachment reports a definitive DHCP/static assignment_method,
+    // or null when the signal is absent or 'none' (the normal value for VM-only bridged networks,
+    // where the host has no IP on the interface); null means "no usable signal", not "not DHCP"
+    protected Boolean definitiveDhcpServer(ipAssignment) {
+        def assignmentMethod = ipAssignment?.assignment_method
+        if (assignmentMethod == 'dhcp' || assignmentMethod == 'static') {
+            return assignmentMethod == 'dhcp'
+        }
+        return null
     }
 
     // computes a CIDR string from an oVirt ip_address_assignment (host network_attachment), if available

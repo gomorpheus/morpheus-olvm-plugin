@@ -1078,7 +1078,7 @@ class OlvmComputeUtility {
             if (response.success) {
                 def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
                 // wait for the VM to be down
-                rtn = waitForSomeStuffToHappen([label: "Start vm ${opts.server?.name}", timeout: (5l * 60l)]) {
+                rtn = waitForSomeStuffToHappen([label: "Stop vm ${opts.server?.name}", timeout: (5l * 60l)]) {
                     response = client.callJsonApi(
                         connection.apiUrl,
                         "/ovirt-engine/api/vms/${vmExternalId}".toString(),

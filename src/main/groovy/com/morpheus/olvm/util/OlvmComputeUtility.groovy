@@ -964,7 +964,7 @@ class OlvmComputeUtility {
 
             if (response.success) {
                 def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
-                rtn = waitForSomeStuffToHappen([label: "Start vm ${opts.server?.name}", timeout: (5l * 60l * 1000l)]) {
+                rtn = waitForSomeStuffToHappen([label: "Start vm ${opts.server?.name}", timeout: (5l * 60l)]) {
                     response = client.callJsonApi(
                         connection.apiUrl,
                         "/ovirt-engine/api/vms/${vmExternalId}".toString(),
@@ -1011,27 +1011,36 @@ class OlvmComputeUtility {
             if (response.success) {
                 def vm = response.data
                 if (vm.status != 'up') {
-                    // if our vm status is not up, send the start command
                     def actionBody = [async:true]
                     def postHeaders = getAuthenticatedBaseHeaders(connection)
                     postHeaders['Content-Type'] = 'application/json'
                     def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:actionBody, ignoreSSL:true)
-                    response = client.callJsonApi(
-                        connection.apiUrl,
-                        "/ovirt-engine/api/vms/${vmExternalId}/start".toString(),
-                        postReqOptions,
-                        'POST'
-                    )
 
-                    // wait for the VM to be up
-                    rtn = waitForSomeStuffToHappen([label: "Start vm ${opts.server?.name}", timeout: (5l * 60l * 1000l)]) {
+                    // the start command can fail with 409 while a related operation (e.g. a
+                    // just-completed restore/disk-attach) is still finishing server-side, so
+                    // retry the start command itself, not just poll status, until it is accepted
+                    // or the VM comes up on its own.
+                    rtn = waitForSomeStuffToHappen([label: "Start vm ${opts.server?.name}", timeout: (5l * 60l)]) {
                         response = client.callJsonApi(
                             connection.apiUrl,
                             "/ovirt-engine/api/vms/${vmExternalId}".toString(),
                             reqOptions,
                             'GET'
                         )
-                        return response.data.status == 'up'
+                        if (response.data?.status == 'up') {
+                            return true
+                        }
+
+                        def startResponse = client.callJsonApi(
+                            connection.apiUrl,
+                            "/ovirt-engine/api/vms/${vmExternalId}/start".toString(),
+                            postReqOptions,
+                            'POST'
+                        )
+                        if (!startResponse.success && startResponse.errorCode != '409') {
+                            log.warn("startVm: unexpected error starting vm ${vmExternalId}: ${extractErrorMessage(startResponse.data) ?: startResponse.msg}")
+                        }
+                        return false
                     }
                 } else {
                     // if its already started then just ignore
@@ -1069,7 +1078,7 @@ class OlvmComputeUtility {
             if (response.success) {
                 def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
                 // wait for the VM to be down
-                rtn = waitForSomeStuffToHappen([label: "Start vm ${opts.server?.name}", timeout: (5l * 60l * 1000l)]) {
+                rtn = waitForSomeStuffToHappen([label: "Stop vm ${opts.server?.name}", timeout: (5l * 60l)]) {
                     response = client.callJsonApi(
                         connection.apiUrl,
                         "/ovirt-engine/api/vms/${vmExternalId}".toString(),
@@ -1938,15 +1947,18 @@ class OlvmComputeUtility {
     static ServiceResponse waitForSomeStuffToHappen(Map opts, Closure clos) {
         def rtn = ServiceResponse.prepare()
         def timeout = opts.timeout ?: DEFAULT_WAIT_TIMEOUT
-        def expired = false
         def startTime = System.currentTimeMillis()
+        def conditionMet = false
 
         while (System.currentTimeMillis() - startTime < (timeout * 1000l)) {
-            if (clos.call(opts))
+            if (clos.call(opts)) {
+                conditionMet = true
                 break
+            }
             sleep(3000l)
         }
-        if (expired) {
+        if (!conditionMet) {
+            rtn.success = false
             rtn.error = "Operation timed out: ${opts.label ?: 'operation not labeled'}"
         }
         else {

@@ -1331,8 +1331,12 @@ class OlvmProvisionProvider extends AbstractProvisionProvider implements VmProvi
 	 */
 	@Override
 	ServiceResponse restartWorkload(Workload workload) {
-		// Generally a call to stopWorkLoad() and then startWorkload()
-		return ServiceResponse.success()
+		log.debug "restartWorkload: ${workload}"
+		ServiceResponse stopResult = stopWorkload(workload)
+		if (stopResult.success) {
+			return startWorkload(workload)
+		}
+		return stopResult
 	}
 
 	/**

@@ -152,6 +152,17 @@ class OlvmCloudProvider implements CloudProvider {
 			inputType:OptionType.InputType.CHECKBOX,
 			fieldContext:'config'
 		)
+		options << new OptionType(
+			name:'Enable SSL Verification',
+			code:'olvm.plugin.enableSslVerification',
+			fieldName:'enableSslVerification',
+			displayOrder:95,
+			fieldLabel:'Enable SSL Verification',
+			required:false,
+			inputType:OptionType.InputType.CHECKBOX,
+			fieldContext:'config',
+			helpText:'Verify the TLS certificate presented by the OLVM engine. Leave disabled to accept self-signed or otherwise untrusted certificates.'
+		)
 
 		return options
 	}

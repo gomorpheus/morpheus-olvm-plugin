@@ -990,7 +990,7 @@ class OlvmComputeUtility {
     }
 
     static startVm(opts) {
-        ServiceResponse rtn
+        ServiceResponse rtn = ServiceResponse.success()
         Map connection = opts.connection
         HttpApiClient client
         try {
@@ -1014,7 +1014,8 @@ class OlvmComputeUtility {
                     def actionBody = [async:true]
                     def postHeaders = getAuthenticatedBaseHeaders(connection)
                     postHeaders['Content-Type'] = 'application/json'
-                    def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:actionBody, ignoreSSL:(connection?.ignoreSSL != false))
+                    def postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:actionBody, ignoreSSL:(connection?.ignoreSSL != false))
+                    String startFailureMessage = null
 
                     // the start command can fail with 409 while a related operation (e.g. a
                     // just-completed restore/disk-attach) is still finishing server-side, so
@@ -1037,16 +1038,32 @@ class OlvmComputeUtility {
                             postReqOptions,
                             'POST'
                         )
-                        if (!startResponse.success && startResponse.errorCode != '409') {
-                            log.warn("startVm: unexpected error starting vm ${vmExternalId}: ${extractErrorMessage(startResponse.data) ?: startResponse.msg}")
+                        if (!startResponse.success) {
+                            def startErrorMessage = extractErrorMessage(startResponse.data) ?: startResponse.msg
+                            if (startResponse.errorCode != '409') {
+                                startFailureMessage = startErrorMessage ?: 'Unknown oVirt error'
+                                log.warn("startVm: unexpected error starting vm ${vmExternalId}: ${startFailureMessage}")
+                            } else if (startErrorMessage) {
+                                startFailureMessage = startErrorMessage
+                            }
                         }
                         return false
+                    }
+                    if (rtn?.success != true && startFailureMessage) {
+                        rtn = ServiceResponse.error("Failed to start vm: ${startFailureMessage}")
                     }
                 } else {
                     // if its already started then just ignore
                     rtn = ServiceResponse.success()
                 }
             }
+            else {
+                rtn = ServiceResponse.error("Failed to load vm ${vmExternalId}: ${extractErrorMessage(response.data) ?: response.msg ?: 'Unknown oVirt error'}")
+            }
+        }
+        catch (Throwable t) {
+            log.error("startVm error: ${t.message}", t)
+            rtn = ServiceResponse.error("Failed to start vm: ${t.message}")
         }
         finally {
             client?.shutdownClient()

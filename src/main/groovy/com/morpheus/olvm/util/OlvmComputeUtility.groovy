@@ -27,7 +27,7 @@ class OlvmComputeUtility {
             }
             def headers = getAuthenticatedBaseHeaders(connection)
             client = getApiClient(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             def resp = client.callJsonApi(
                 connection.apiUrl,
                 '/ovirt-engine/api/datacenters',
@@ -66,7 +66,7 @@ class OlvmComputeUtility {
             }
             def headers = getAuthenticatedBaseHeaders(connection)
             client = getApiClient(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             def path = '/ovirt-engine/api/clusters'
             if(opts.datacenterId) {
                 path = "/ovirt-engine/api/datacenters/${opts.datacenterId}/clusters".toString()
@@ -111,7 +111,7 @@ class OlvmComputeUtility {
 
             def headers = getAuthenticatedBaseHeaders(connection)
             client = getApiClient(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             def response = client.callJsonApi(
                 connection.apiUrl,
                 '/ovirt-engine/api/templates',
@@ -152,7 +152,7 @@ class OlvmComputeUtility {
 
             def headers = getAuthenticatedBaseHeaders(connection)
             client = getApiClient(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             def response = client.callJsonApi(
                 connection.apiUrl,
                 '/ovirt-engine/api/vms',
@@ -196,7 +196,7 @@ class OlvmComputeUtility {
 			if(opts.includeNetworkAttachments) {
 				queryParams = [follow:'networkattachments']
 			}
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:(connection?.ignoreSSL != false))
             client = getApiClient(connection)
             def response = client.callJsonApi(
                 connection.apiUrl,
@@ -228,7 +228,7 @@ class OlvmComputeUtility {
             client = getApiClient(connection)
             def queryParams = [follow:'vnicprofiles']
             def path = '/ovirt-engine/api/networks'
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:(connection?.ignoreSSL != false))
             def response = client.callJsonApi(
                 connection.apiUrl,
                 path,
@@ -298,7 +298,7 @@ class OlvmComputeUtility {
 
             def headers = getAuthenticatedBaseHeaders(connection)
             client = getApiClient(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             def path = '/ovirt-engine/api/storagedomains'
             if(opts.datacenterId) {
                 path = "/ovirt-engine/api/datacenters/${opts.datacenterId}/storagedomains".toString()
@@ -369,7 +369,7 @@ class OlvmComputeUtility {
                 // if using just an image name, we must leverage the search service
                 def imageName = opts.imageName.replaceAll(' ', '_')
                 def queryParams = [search:"name=${imageName}".toString()]
-                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
+                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:(connection?.ignoreSSL != false))
                 def response = client.callJsonApi(
                     connection.apiUrl,
                     '/ovirt-engine/api/templates',
@@ -388,7 +388,7 @@ class OlvmComputeUtility {
                 }
             }
             else if (opts.imageId) {
-                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
                 def response = client.callJsonApi(
                     connection.apiUrl,
                     "/ovirt-engine/api/templates/${opts.imageId}".toString(),
@@ -430,7 +430,7 @@ class OlvmComputeUtility {
             def imageName = vi.name.replaceAll(' ', '_')
             def headers = getAuthenticatedBaseHeaders(connection)
             def queryParams = [search:"name=${imageName}".toString()]
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:(connection?.ignoreSSL != false))
             client = getApiClient(connection)
             def response = client.callJsonApi(
                 connection.apiUrl,
@@ -459,7 +459,7 @@ class OlvmComputeUtility {
                         'storage_domain':[[id:opts.storageDomainId]]
                     ]
                 ]
-                def postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:true)
+                def postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:(connection?.ignoreSSL != false))
                 response = client.callJsonApi(
                     connection.apiUrl,
                     '/ovirt-engine/api/disks',
@@ -469,7 +469,7 @@ class OlvmComputeUtility {
                 def blank = response.data
 
                 // Wait for disk to be ready before we start data transfer
-                reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+                reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
                 waitForSomeStuffToHappen([label: "Waiting for blank disk to be ready"]) {
                     response = client.callJsonApi(
                         connection.apiUrl,
@@ -483,7 +483,7 @@ class OlvmComputeUtility {
                 // create an image transfer session
                 def blankDiskId = blank.id
                 reqBody = [disk:[id:blankDiskId], direction:'upload', 'inactivity_timeout':15 * 60]
-                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:true)
+                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:(connection?.ignoreSSL != false))
                 def transferSession = client.callJsonApi(
                     connection.apiUrl,
                     '/ovirt-engine/api/imagetransfers',
@@ -519,7 +519,7 @@ class OlvmComputeUtility {
                 pushDataToTarget(qcowInputStream, transferUrl, connection, cloudFile.contentLength)
 
                 // once data has been pushed to target, finalize the transfer
-                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:[:], ignoreSSL:true)
+                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:[:], ignoreSSL:(connection?.ignoreSSL != false))
                 response = client.callJsonApi(
                     connection.apiUrl,
                     "/ovirt-engine/api/imagetransfers/${xferId}/finalize".toString(),
@@ -556,7 +556,7 @@ class OlvmComputeUtility {
                     cluster:[id:opts.clusterRef],
                     template:[id:'00000000-0000-0000-0000-000000000000']
                 ]
-                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:true)
+                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:(connection?.ignoreSSL != false))
                 response = client.callJsonApi(
                     connection.apiUrl,
                     '/ovirt-engine/api/vms',
@@ -590,7 +590,7 @@ class OlvmComputeUtility {
                     active:true,
                     disk:[id:blankDiskId]
                 ]
-                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:true)
+                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:(connection?.ignoreSSL != false))
                 response = client.callJsonApi(
                     connection.apiUrl,
                     "/ovirt-engine/api/vms/${newVm.id}/diskattachments",
@@ -617,7 +617,7 @@ class OlvmComputeUtility {
 
                 // create template from this vm
                 reqBody = [name:imageName, vm:[id:newVm.id]]
-                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:true)
+                postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:reqBody, ignoreSSL:(connection?.ignoreSSL != false))
                 response = client.callJsonApi(
                     connection.apiUrl,
                     '/ovirt-engine/api/templates',
@@ -757,7 +757,7 @@ class OlvmComputeUtility {
 
             // grab template information
             def headers = getAuthenticatedBaseHeaders(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             def response = client.callJsonApi(
                 connection.apiUrl,
                 "/ovirt-engine/api/templates/${imageRef}/diskattachments".toString(),
@@ -849,7 +849,7 @@ class OlvmComputeUtility {
             }
             log.info("createServer: stateless=${opts.stateless}, diskProvisioning=${opts.diskProvisioning}, cloneType=${opts.cloneType}")
             def postHeaders = getAuthenticatedBaseHeaders(connection)
-            def postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:postBody, ignoreSSL:true)
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:postBody, ignoreSSL:(connection?.ignoreSSL != false))
             if (opts.cloneType == 'full') {
                 postReqOptions.queryParams = [clone: 'true']
             }
@@ -908,7 +908,7 @@ class OlvmComputeUtility {
                 'disk_attachment':snapDisks
             ]
 
-            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:(connection?.ignoreSSL != false))
             def response = client.callJsonApi(
                 connection.apiUrl,
                 '/ovirt-engine/api/vms',
@@ -964,7 +964,7 @@ class OlvmComputeUtility {
             
             log.debug("startVmWithCloudInit - Request: custom_script with ${opts.cloudInitScript?.length() ?: 0} characters")
             
-            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:reqBody, ignoreSSL:true)
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:reqBody, ignoreSSL:(connection?.ignoreSSL != false))
             def response = client.callJsonApi(
                 connection.apiUrl,
                 "/ovirt-engine/api/vms/${vmExternalId}/start".toString(),
@@ -973,7 +973,7 @@ class OlvmComputeUtility {
             )
 
             if (response.success) {
-                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
                 rtn = waitForSomeStuffToHappen([label: "Start vm ${opts.server?.name}", timeout: (5l * 60l)]) {
                     response = client.callJsonApi(
                         connection.apiUrl,
@@ -1009,7 +1009,7 @@ class OlvmComputeUtility {
             }
             def headers = getAuthenticatedBaseHeaders(connection)
             client = getApiClient(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             def vmExternalId = opts.server?.externalId ?: opts.vmId
             def response = client.callJsonApi(
                 connection.apiUrl,
@@ -1024,7 +1024,7 @@ class OlvmComputeUtility {
                     def actionBody = [async:true]
                     def postHeaders = getAuthenticatedBaseHeaders(connection)
                     postHeaders['Content-Type'] = 'application/json'
-                    def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:actionBody, ignoreSSL:true)
+                    def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:actionBody, ignoreSSL:(connection?.ignoreSSL != false))
 
                     // the start command can fail with 409 while a related operation (e.g. a
                     // just-completed restore/disk-attach) is still finishing server-side, so
@@ -1076,7 +1076,7 @@ class OlvmComputeUtility {
             headers['Content-Type'] = 'application/json'
             client = getApiClient(connection)
             def postBody = [async:true]
-            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:(connection?.ignoreSSL != false))
             def vmExternalId = opts.server?.externalId ?: opts.vmId
             def response = client.callJsonApi(
                 connection.apiUrl,
@@ -1086,7 +1086,7 @@ class OlvmComputeUtility {
             )
 
             if (response.success) {
-                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
                 // wait for the VM to be down
                 rtn = waitForSomeStuffToHappen([label: "Stop vm ${opts.server?.name}", timeout: (5l * 60l)]) {
                     response = client.callJsonApi(
@@ -1125,7 +1125,7 @@ class OlvmComputeUtility {
         try {
             def headers = getAuthenticatedBaseHeaders(connection)
             client = getApiClient(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             def response = client.callJsonApi(
                 connection.apiUrl,
                 "/ovirt-engine/api/vms/${opts.server?.externalId ?: opts.vmId}/nics/${opts.nicId}".toString(),
@@ -1213,7 +1213,7 @@ class OlvmComputeUtility {
             if(externalId) {
                 def headers = getAuthenticatedBaseHeaders(connection)
                 client = getApiClient(connection)
-                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+                def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
                 def response = client.callJsonApi(
                     connection.apiUrl,
                     "/ovirt-engine/api/vms/${externalId}".toString(),
@@ -1331,7 +1331,7 @@ class OlvmComputeUtility {
             }
 
             def headers = getAuthenticatedBaseHeaders(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             client = getApiClient(connection)
             def cloudDisk = client.callJsonApi(connection.apiUrl, "/ovirt-engine/api/disks/${opts.disk.id}", reqOptions, 'GET').data
 
@@ -1339,7 +1339,7 @@ class OlvmComputeUtility {
             if (cloudDisk['provisioned_size']?.toLong() < opts.disk.size) {
                 def putHeaders = getAuthenticatedBaseHeaders(connection)
                 def putBody = [id:opts.disk.id, 'provisioned_size':opts.disk.size]
-                def putReqOptions = new HttpApiClient.RequestOptions(headers:putHeaders, body:putBody, ignoreSSL:true)
+                def putReqOptions = new HttpApiClient.RequestOptions(headers:putHeaders, body:putBody, ignoreSSL:(connection?.ignoreSSL != false))
                 def updateResponse = client.callJsonApi(
                     connection.apiUrl,
                     cloudDisk.href,
@@ -1424,7 +1424,7 @@ class OlvmComputeUtility {
                     'storage_domain':[[id:opts.disk.datastore.externalId]]
                 ]
             ]
-            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:(connection?.ignoreSSL != false))
             def response = client.callJsonApi(
                 connection.apiUrl,
                 '/ovirt-engine/api/disks',
@@ -1438,7 +1438,7 @@ class OlvmComputeUtility {
 
             // wait for our disk to be created before we attach it to our vm
             def newDisk = response.data
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             waitForSomeStuffToHappen([label:"Waiting for disk(${newDisk.id}) to be ready"]) {
                 def d = client.callJsonApi(connection.apiUrl, newDisk.href, reqOptions, 'GET').data
                 return d.status == 'ok'
@@ -1452,7 +1452,7 @@ class OlvmComputeUtility {
                 'logical_name':opts.disk.deviceName ?: '',
                 disk:[id:newDisk.id]
             ]
-            postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+            postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:(connection?.ignoreSSL != false))
             response = client.callJsonApi(
                 connection.apiUrl,
                 "/ovirt-engine/api/vms/${vmId}/diskattachments".toString(),
@@ -1496,7 +1496,7 @@ class OlvmComputeUtility {
 
             def headers = getAuthenticatedBaseHeaders(connection)
             def queryParams = [follow:'diskattachments']
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:(connection?.ignoreSSL != false))
             client = getApiClient(connection)
 
             def response = client.callJsonApi(
@@ -1513,7 +1513,7 @@ class OlvmComputeUtility {
 
             // detach the disk from our vm
             queryParams = ['detach_only':'true']
-            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:true)
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, queryParams:queryParams, ignoreSSL:(connection?.ignoreSSL != false))
             response = client.callJsonApi(
                 connection.apiUrl,
                 "/ovirt-engine/api/vms/${vmId}/diskattachments/${attachment.id}".toString(),
@@ -1547,7 +1547,7 @@ class OlvmComputeUtility {
 
             def headers = getAuthenticatedBaseHeaders(connection)
             client = getApiClient(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             def response = client.callJsonApi(
                 connection.apiUrl,
                 "/ovirt-engine/api/disks/${opts.volumeId}".toString(),
@@ -1592,7 +1592,7 @@ class OlvmComputeUtility {
             if (opts.vm.maxCores)
                 postBody.cpu = buildCpus(opts.vm)
 
-            def postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:postBody, ignoreSSL:true)
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, body:postBody, ignoreSSL:(connection?.ignoreSSL != false))
             def response = client.callJsonApi(
                 connection.apiUrl,
                 "/ovirt-engine/api/vms/${vmId}".toString(),
@@ -1604,7 +1604,7 @@ class OlvmComputeUtility {
                 throw new RuntimeException("Failed to update vm ${vmId}: ${extractErrorMessage(response.data)}")
             }
 
-            def reqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:postHeaders, ignoreSSL:(connection?.ignoreSSL != false))
             def vm
             waitForSomeStuffToHappen([label:"waiting for vm (${opts.vm.id}) to save"]) {
                 vm = client.callJsonApi(
@@ -1648,7 +1648,7 @@ class OlvmComputeUtility {
                     interface:'virtio',
                     'vnic_profile':[id:networkInterface.network.externalId]
                 ]
-                def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+                def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:(connection?.ignoreSSL != false))
                 def addResponse = client.callJsonApi(
                     connection.apiUrl,
                     "/ovirt-engine/api/vms/${vmId}/nics".toString(),
@@ -1691,7 +1691,7 @@ class OlvmComputeUtility {
             // then remove vm
             client = getApiClient(connection)
             def headers = getAuthenticatedBaseHeaders(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             def response = client.callJsonApi(
                 connection.apiUrl,
                 "/ovirt-engine/api/vms/${vmId}".toString(),
@@ -1718,7 +1718,7 @@ class OlvmComputeUtility {
             def postBody = [
                 description:opts.description ?: 'A morpheus initiated snapshot'
             ]
-            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:(connection?.ignoreSSL != false))
             client = getApiClient(connection)
 
             def response = client.callJsonApi(
@@ -1733,7 +1733,7 @@ class OlvmComputeUtility {
 
             // now wait for our snapshot to complete
             def snapshot = response.data
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             waitForSomeStuffToHappen([label:"Waiting for snapshot(${snapshot.id}) to be ready"]) {
                 def s = client.callJsonApi(
                     connection.apiUrl,
@@ -1766,7 +1766,7 @@ class OlvmComputeUtility {
             }
             client = getApiClient(connection)
             def headers = getAuthenticatedBaseHeaders(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             def response = client.callJsonApi(
                 connection.apiUrl,
                 "/ovirt-engine/api/vms/${opts.vmId}/snapshots/${opts.snapshotId}".toString(),
@@ -1816,7 +1816,7 @@ class OlvmComputeUtility {
                 ]
             }
             def postBody = [disks:[disk:disks]]
-            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:true)
+            def postReqOptions = new HttpApiClient.RequestOptions(headers:headers, body:postBody, ignoreSSL:(connection?.ignoreSSL != false))
             def response = client.callJsonApi(
                 connection.apiUrl,
                 "/ovirt-engine/api/vms/${opts.vmId}/snapshots/${opts.snapshotId}/restore".toString(),
@@ -1827,7 +1827,7 @@ class OlvmComputeUtility {
             if (!response.success)
                 throw new RuntimeException("Failed to restore snapshot ${opts.snapshotId}: ${extractErrorMessage(response.data)}")
 
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             waitForSomeStuffToHappen([label:"Waiting for vm restore(${opts.vmId}) to be ready"]) {
                 def v = client.callJsonApi(
                     connection.apiUrl,
@@ -1884,7 +1884,7 @@ class OlvmComputeUtility {
         }
         try {
             def headers = getAuthenticatedBaseHeaders(connection)
-            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:true)
+            def reqOptions = new HttpApiClient.RequestOptions(headers:headers, ignoreSSL:(connection?.ignoreSSL != false))
             client = getApiClient(connection)
 
             // first wait for the vm to unlock
@@ -1920,7 +1920,7 @@ class OlvmComputeUtility {
             client = getApiClient(connection)
             def headers = getAuthenticatedBaseHeaders(connection)
             if(headers) {
-                def reqOptions = new HttpApiClient.RequestOptions(headers: headers, ignoreSSL: true)
+                def reqOptions = new HttpApiClient.RequestOptions(headers: headers, ignoreSSL: (connection?.ignoreSSL != false))
                 def resp = client.callJsonApi(
                         connection.apiUrl,
                         '/ovirt-engine/api',
@@ -2040,10 +2040,15 @@ class OlvmComputeUtility {
             cloud.accountCredentialLoaded = true
         }
 
+        // TLS certificate validation is skipped by default for backward compatibility, but operators can
+        // opt in to verification via the "Enable SSL Verification" cloud config checkbox.
+        Boolean ignoreSSL = !(cloud.configMap?.enableSslVerification == 'on')
+
         def config = [
             endpointUrl:cloud.serviceUrl,
             serviceUsername:cloud.accountCredentialData?.username ?: cloud.serviceUsername,
-            servicePassword:cloud.accountCredentialData?.password ?: cloud.servicePassword
+            servicePassword:cloud.accountCredentialData?.password ?: cloud.servicePassword,
+            ignoreSSL:ignoreSSL
         ]
 
         if (cloud.apiProxy) {
@@ -2055,7 +2060,7 @@ class OlvmComputeUtility {
             client = getApiClient(config)
             def headers = ['Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json']
             def body = "grant_type=password&scope=ovirt-app-api&username=${URLEncoder.encode(config.serviceUsername, 'UTF-8')}&password=${URLEncoder.encode(config.servicePassword, 'UTF-8')}".toString()
-            HttpApiClient.RequestOptions reqOptions = new HttpApiClient.RequestOptions(headers: headers, body: body, ignoreSSL: true)
+            HttpApiClient.RequestOptions reqOptions = new HttpApiClient.RequestOptions(headers: headers, body: body, ignoreSSL: ignoreSSL)
             def resp = client.callJsonApi(
                 extractRootURL(config.endpointUrl),
                 '/ovirt-engine/sso/oauth/token',
@@ -2064,10 +2069,10 @@ class OlvmComputeUtility {
             )
 
             if (resp.success) {
-                return [success:true, apiUrl: extractRootURL(config.endpointUrl), token: resp.data['access_token']]
+                return [success:true, apiUrl: extractRootURL(config.endpointUrl), token: resp.data['access_token'], ignoreSSL:ignoreSSL]
             } else {
                 log.error("Failed to authenticate to OLVM environment: ${extractErrorMessage(resp.data)}")
-                return [success:false, apiUrl: extractRootURL(config.endpointUrl), error:extractErrorMessage(resp.data)]
+                return [success:false, apiUrl: extractRootURL(config.endpointUrl), error:extractErrorMessage(resp.data), ignoreSSL:ignoreSSL]
             }
         }
         catch (Throwable t) {
@@ -2087,7 +2092,8 @@ class OlvmComputeUtility {
         def config = [
             endpointUrl:cloud.serviceUrl,
             serviceUsername:cloud.accountCredentialData?.username ?: cloud.serviceUsername,
-            servicePassword:cloud.accountCredentialData?.password ?: cloud.servicePassword
+            servicePassword:cloud.accountCredentialData?.password ?: cloud.servicePassword,
+            ignoreSSL: !(cloud.configMap?.enableSslVerification == 'on')
         ]
 
         if (cloud.apiProxy) {

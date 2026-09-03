@@ -13,6 +13,7 @@ buildscript {
 		classpath "io.github.gradle-nexus:publish-plugin:1.0.0"
 		classpath "com.morpheusdata:morpheus-plugin-gradle:$morpheusPluginGradleVersion"
 		classpath "com.bertramlabs.plugins:asset-pipeline-gradle:$assetPipelineVersion"
+		classpath "org.jfrog.buildinfo:build-info-extractor-gradle:5.+"
 	}
 }
 
@@ -24,9 +25,11 @@ apply plugin: 'com.github.johnrengelman.shadow'
 apply plugin: 'asset-pipeline'
 apply plugin: 'maven-publish'
 apply plugin: 'com.morpheusdata.morpheus-plugin-gradle'
+apply plugin: 'com.jfrog.artifactory'
 
 
-group = 'com.morpheusdata'
+// Standardized HPE Morpheus plugin groupId: com.hpe.morpheus.<domain>
+group = 'com.hpe.morpheus.olvm'
 ext.isReleaseVersion = !version.endsWith("SNAPSHOT")
 
 java {
@@ -136,3 +139,52 @@ task generateVersionProperties {
 	}
 }
 processResources.dependsOn generateVersionProperties
+
+def getEnvOrProperty(final String envVar, final String propertyKey) {
+	return System.getenv(envVar) ?: project.findProperty(propertyKey)
+}
+
+final gitCommitId = providers.exec {
+	commandLine('git', 'rev-parse', 'HEAD')
+}.standardOutput.asText.get()
+
+final gitBranchName = providers.exec {
+	commandLine('git', 'rev-parse', '--abbrev-ref', 'HEAD')
+}.standardOutput.asText.get()
+
+publishing {
+	publications {
+		mavenJava(MavenPublication) {
+			from components.java
+			artifact(tasks.named('shadowJar'))
+		}
+	}
+}
+
+artifactory {
+	publish {
+		// Define the Artifactory URL for publishing artifacts
+		contextUrl = 'https://hpeartifacts.jfrog.io/artifactory'
+		// Define the project repository to which the artifacts will be published
+		repository {
+			// Set the Artifactory repository key
+			repoKey = 'morpheus-plugins'
+			// Specify the publisher username
+			username = getEnvOrProperty('ARTIFACTORY_USER', 'artifactory_user')
+			// Provide the publisher password
+			password = getEnvOrProperty('ARTIFACTORY_PASSWORD', 'artifactory_password')
+		}
+
+		// Include all configured publications for all the modules
+		defaults {
+			publications('mavenJava')
+			publishArtifacts = true
+			properties = [
+					'commit_id': gitCommitId,
+					'branch'   : gitBranchName,
+			]
+			publishPom = true
+			publishBuildInfo = false
+		}
+	}
+}

@@ -1,0 +1,44 @@
+name: CI Publish to JFrog Artifactory
+
+on:
+  push:
+    branches:
+      - api-1.2.x
+      - rc-*
+  workflow_dispatch:
+
+concurrency:
+  # Maintain linearity of artifact versions.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-to-artifactory:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: 🐸 Authenticate JFrog
+        id: setup-jfrog-cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: https://hpeartifacts.jfrog.io
+        with:
+          oidc-provider-name: hpe-emu
+          oidc-audience: hpe-emu-jfrog
+
+      - name: Publish to Artifactory
+        run: ./gradlew artifactoryPublish
+        env:
+          ARTIFACTORY_USER: ${{ steps.setup-jfrog-cli.outputs.oidc-user }}
+          ARTIFACTORY_PASSWORD: ${{ steps.setup-jfrog-cli.outputs.oidc-token }}

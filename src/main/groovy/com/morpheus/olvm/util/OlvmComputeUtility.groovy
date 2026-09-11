@@ -334,7 +334,7 @@ class OlvmComputeUtility {
     static validateServerConfig(MorpheusContext morpheusContext, Map opts =[:]) {
         def rtn = [success:false, errors: []]
         try {
-            def cloudId = opts.cloud?.id.toLong() ?: opts.zoneId?.toLong()
+            def cloudId = opts.cloud?.id?.toLong() ?: opts.zoneId?.toLong()
             def cloud = morpheusContext.async.cloud.getCloudById(opts.zoneId?.toLong()).blockingGet()
             def configMap = cloud.configMap
             // Validate enough Elastic IPs left
